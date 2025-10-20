@@ -1,85 +1,861 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-	<meta charset="UTF-8">
-	<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-	<meta content="yes" name="apple-mobile-web-app-capable"/>
-	<link rel="apple-touch-icon" href="/favicon.ico">
-	<link rel="stylesheet"  href="/custom/index.css">
-	<meta name="viewport"
-		content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover" />
-	<title>Sun-Panel</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M-Team 投注系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    <script>
+        // 备用Axios加载
+        if (typeof axios === 'undefined') {
+            document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
+        }
+
+        // 全局变量
+        let axiosLoaded = false;
+        let serviceRunning = false; // 服务运行状态
+        let mainInterval = null; // 主服务定时器
+
+        // 日志系统
+        const Logger = {
+            logs: [],
+            log(content, level = "INFO") {
+                const now = new Date().toLocaleString("zh-CN", {
+                    year: "numeric", month: "2-digit", day: "2-digit",
+                    hour: "2-digit", minute: "2-digit", second: "2-digit"
+                });
+                const logItem = `[${now}] [${level}] ${content}`;
+                this.logs.unshift(logItem);
+                if (this.logs.length > 100) this.logs.pop();
+                this.render();
+            },
+            info(content) { this.log(content, "INFO"); },
+            error(content) { this.log(content, "ERROR"); },
+            warning(content) { this.log(content, "WARN"); },
+            debug(content) { if (CONFIG.args.verbose) this.log(content, "DEBUG"); },
+            render() {
+                const panel = document.getElementById('logPanel');
+                if (panel) {
+                    panel.innerHTML = this.logs.map(log => 
+                        `<div class="text-sm ${log.includes('ERROR') ? 'text-red-600' : log.includes('WARN') ? 'text-yellow-600' : ''}">${log}</div>`
+                    ).join("<br>");
+                    panel.scrollTop = 0;
+                }
+            }
+        };
+
+        // 配置
+        const CONFIG = {
+            mainHost: "https://api.m-team.io/api",
+            testHost: "https://test2.m-team.cc/api",
+            webHost: "https://m-team.io",
+            apis: {
+                "get_current_bet": "bet/findBetgameList?active=LIVE&fix=0",
+                "betgameOdds": "bet/betgameOdds?optId={optId}&bonus={bonus}",
+                "get_details": "bet/getDetail?gameId={gameId}",
+                "get_gamblers": "bet/getDetailBetList?gameId={gameId}"
+            },
+            network: {
+                timeout: 15000,
+                retryCount: 2,
+                retryDelay: 2000
+            },
+            // 增强定时刷新配置
+            autoRefresh: {
+                interval: 30, // 默认30秒
+                enabled: false,
+                timer: null,
+                taskLog: [] // 记录刷新任务日志
+            },
+            state: {
+                available_bets: [],
+                bet_mask: {},
+                configs: {},
+                logs: [],
+                scheduler_jobs: [],
+                autoBetEnabled: false
+            },
+            args: {
+                target_uid: "205809",
+                bias: 3,
+                tolerance: 10,
+                verbose: false,
+                bias_range: 20000,
+                bonus: 10000,
+                check_interval: 2,
+                policy: "larger"
+            }
+        };
+
+        // 网络检查
+        function checkNetwork() {
+            if (!navigator.onLine) {
+                Logger.warning("网络连接已断开");
+                return false;
+            }
+            return true;
+        }
+
+        // 请求函数
+        async function requestWithRetry(url, data = {}, retryCount = 0) {
+            if (!axiosLoaded) throw new Error("Axios未加载");
+            if (!checkNetwork()) throw new Error("网络不可用");
+
+            try {
+                Logger.debug(`请求: ${url} (第${retryCount+1}次)`);
+                
+                const response = await axios({
+                    method: 'post',
+                    url: url,
+                    data: data,
+                    headers: CONFIG.headers,
+                    timeout: CONFIG.network.timeout,
+                    withCredentials: false,
+                    crossdomain: true
+                });
+
+                return response;
+            } catch (error) {
+                let errorMsg = error.message || "未知错误";
+                
+                if (errorMsg.includes("Network Error")) {
+                    errorMsg = "网络连接失败";
+                    if (window.location.protocol === "file:") {
+                        errorMsg += "\n请尝试：\n1. 使用Firefox浏览器打开\n2. 或在Chrome快捷方式后添加参数：\n--disable-web-security --user-data-dir=C:\\chromeTemp";
+                    }
+                } else if (errorMsg.includes("timeout")) {
+                    errorMsg = `请求超时（${CONFIG.network.timeout}ms）`;
+                }
+
+                if (retryCount < CONFIG.network.retryCount) {
+                    const delay = CONFIG.network.retryDelay * (retryCount + 1);
+                    Logger.warning(`请求失败 [${errorMsg}]，${delay}ms后重试（${retryCount+1}/${CONFIG.network.retryCount}）`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return requestWithRetry(url, data, retryCount + 1);
+                }
+
+                Logger.error(`请求最终失败: ${errorMsg}`);
+                throw error;
+            }
+        }
+
+        // API验证
+        async function initApiKey() {
+            if (!axiosLoaded) return false;
+
+            let apiKey = localStorage.getItem("MTAPIKEY") || document.getElementById("apiKeyInput").value.trim();
+            if (!apiKey) {
+                Logger.error("请输入API Key");
+                return false;
+            }
+
+            CONFIG.headers = { 
+                "x-api-key": apiKey,
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+            };
+
+            try {
+                const testUrl = `${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`;
+                Logger.info(`验证API: ${testUrl}`);
+                await requestWithRetry(testUrl);
+                
+                localStorage.setItem("MTAPIKEY", apiKey);
+                Logger.info("API验证成功");
+                document.getElementById("apiKeyInput").classList.add("border-green-500");
+                return true;
+            } catch (e) {
+                try {
+                    Logger.info(`尝试备用服务器: ${CONFIG.testHost}`);
+                    const testUrl = `${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`;
+                    await requestWithRetry(testUrl);
+                    
+                    CONFIG.mainHost = CONFIG.testHost;
+                    Logger.info(`已切换至备用服务器`);
+                    localStorage.setItem("MTAPIKEY", apiKey);
+                    document.getElementById("apiKeyInput").classList.add("border-green-500");
+                    return true;
+                } catch (testErr) {
+                    Logger.error(`所有服务器连接失败: ${testErr.message}`);
+                    Logger.error("本地浏览器解决方案:");
+                    Logger.error("1. 推荐使用Firefox浏览器（对本地文件限制较少）");
+                    Logger.error("2. 如使用Chrome：右键快捷方式→属性→目标后添加:");
+                    Logger.error("   --disable-web-security --user-data-dir=C:\\chromeTemp");
+                    Logger.error("3. 添加后重启Chrome，再打开此文件");
+                    document.getElementById("apiKeyInput").classList.add("border-red-500");
+                    return false;
+                }
+            }
+        }
+
+        // 核心功能（保持不变）
+        async function get_available_bets() {
+            try {
+                const startTime = new Date().getTime();
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`;
+                const response = await requestWithRetry(url);
+                CONFIG.state.available_bets = response.data.data || [];
+                
+                // 记录刷新任务日志
+                const endTime = new Date().getTime();
+                CONFIG.autoRefresh.taskLog.unshift({
+                    time: new Date().toLocaleString(),
+                    count: CONFIG.state.available_bets.length,
+                    duration: `${(endTime - startTime)/1000}s`
+                });
+                if (CONFIG.autoRefresh.taskLog.length > 20) CONFIG.autoRefresh.taskLog.pop();
+                
+                Logger.info(`找到 ${CONFIG.state.available_bets.length} 个可投注项目（耗时${(endTime - startTime)/1000}秒）`);
+                renderBetsTable();
+                return true;
+            } catch (e) {
+                Logger.error(`获取项目失败: ${e.message}`);
+                return false;
+            }
+        }
+
+        async function get_tttsc(gameId) {
+            try {
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_gamblers.replace("{gameId}", gameId)}`;
+                const response = await requestWithRetry(url);
+                return (response.data.data || []).find(log => log.userid === CONFIG.args.target_uid) || null;
+            } catch (e) {
+                Logger.error(`获取用户记录失败: ${e.message}`);
+                return null;
+            }
+        }
+
+        async function get_larger(gameId) {
+            try {
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_details.replace("{gameId}", gameId)}`;
+                const response = await requestWithRetry(url);
+                const options = response.data.data?.optionsList || [];
+                if (options.length > 3) return [];
+                
+                const odds = options.map(opt => parseFloat(opt.odds));
+                const minIdx = odds.indexOf(Math.min(...odds));
+                return options.filter((_, i) => i !== minIdx).map(opt => opt.id);
+            } catch (e) {
+                Logger.error(`获取大赔率失败: ${e.message}`);
+                return [];
+            }
+        }
+
+        async function get_smaller(gameId) {
+            try {
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_details.replace("{gameId}", gameId)}`;
+                const response = await requestWithRetry(url);
+                const options = response.data.data?.optionsList || [];
+                if (options.length > 3) return [];
+                
+                const odds = options.map(opt => parseFloat(opt.odds));
+                const maxIdx = odds.indexOf(Math.max(...odds));
+                return options.filter((_, i) => i !== maxIdx).map(opt => opt.id);
+            } catch (e) {
+                Logger.error(`获取小赔率失败: ${e.message}`);
+                return [];
+            }
+        }
+
+        async function bet(cfg) {
+            try {
+                const policy = CONFIG.args.policy;
+                let choices = [], my_bonuses = [];
+                
+                if (policy === 'follow') {
+                    while (true) {
+                        const tttscLog = await get_tttsc(cfg.bet_id);
+                        const now = new Date();
+                        const endTime = new Date(cfg.endtime);
+                        const toleranceTime = new Date(endTime.getTime() + CONFIG.args.tolerance * 1000);
+                        
+                        if (now >= toleranceTime) {
+                            Logger.error(`超过容忍时间 ${CONFIG.args.tolerance} 秒`);
+                            break;
+                        }
+                        if (!tttscLog) {
+                            await new Promise(resolve => setTimeout(resolve, CONFIG.args.check_interval * 1000));
+                            continue;
+                        }
+                        
+                        choices = [tttscLog.optionid];
+                        const bonus = Math.max(parseInt(tttscLog.bonus) + 
+                            (Math.random() * CONFIG.args.bias_range * 2 - CONFIG.args.bias_range), 100);
+                        my_bonuses = [bonus.toString()];
+                        break;
+                    }
+                } else if (policy === 'larger') {
+                    choices = await get_larger(cfg.bet_id);
+                    my_bonuses = choices.map(() => 
+                        Math.max(CONFIG.args.bonus + (Math.random() * CONFIG.args.bias_range * 2 - CONFIG.args.bias_range), 100).toString()
+                    );
+                } else if (policy === 'smaller') {
+                    choices = await get_smaller(cfg.bet_id);
+                    my_bonuses = choices.map(() => 
+                        Math.max(CONFIG.args.bonus + (Math.random() * CONFIG.args.bias_range * 2 - CONFIG.args.bias_range), 100).toString()
+                    );
+                }
+                
+                for (let i = 0; i < choices.length; i++) {
+                    const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
+                        .replace("{optId}", choices[i])
+                        .replace("{bonus}", my_bonuses[i])}`;
+                    const response = await requestWithRetry(url);
+                    Logger.info(`投注成功: 项目 ${cfg.bet_id} 选项 ${choices[i]}`);
+                    
+                    CONFIG.state.bet_mask[cfg.bet_id] = [...(CONFIG.state.bet_mask[cfg.bet_id] || []), choices[i]];
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                renderBetsTable();
+            } catch (e) {
+                Logger.error(`投注失败: ${e.message}`);
+            }
+        }
+
+        // 配置与任务管理
+        function flush_config() {
+            const offset = 252;
+            if (!CONFIG.state.available_bets.length) {
+                get_available_bets().then(() => doFlushConfig(offset));
+            } else {
+                doFlushConfig(offset);
+            }
+        }
+
+        function doFlushConfig(offset) {
+            const configs = {};
+            CONFIG.state.bet_mask = {};
+            
+            CONFIG.state.available_bets.forEach((bet, i) => {
+                const id = bet.id;
+                configs[id] = {
+                    bet_id: id,
+                    desc: `${bet.heading}, ${bet.undertext}`,
+                    endtime: bet.endtime,
+                    scheduled_time: new Date(new Date(bet.endtime).getTime() - 
+                        CONFIG.args.bias * 1000 - offset * i * 1000
+                    ).toISOString().replace('T', ' ').replace('Z', ''),
+                    scheduled_time_multi: new Date(new Date(bet.endtime).getTime() - 
+                        120000 - offset * i * 1000
+                    ).toISOString().replace('T', ' ').replace('Z', '')
+                };
+            });
+            
+            CONFIG.state.configs = configs;
+            Logger.info("配置已刷新");
+            renderConfigTable();
+        }
+
+        function flush_schedule_bet() {
+            CONFIG.state.scheduler_jobs.forEach(clearTimeout);
+            CONFIG.state.scheduler_jobs = [];
+            
+            if (!CONFIG.state.autoBetEnabled) return;
+            
+            Object.values(CONFIG.state.configs).forEach(cfg => {
+                const time = new Date(cfg.scheduled_time);
+                const now = new Date();
+                const delay = time - now;
+                
+                if (delay > 0) {
+                    const job = setTimeout(() => bet(cfg), delay);
+                    CONFIG.state.scheduler_jobs.push(job);
+                    Logger.info(`任务调度: 项目 ${cfg.bet_id} 于 ${cfg.scheduled_time}`);
+                }
+                
+                if (CONFIG.args.policy === "follow") {
+                    const multiTime = new Date(cfg.scheduled_time_multi);
+                    const multiDelay = multiTime - now;
+                    
+                    if (multiDelay > 0) {
+                        const job = setTimeout(() => bet(cfg), multiDelay);
+                        CONFIG.state.scheduler_jobs.push(job);
+                    }
+                }
+            });
+        }
+
+        // 新增：验证并启动服务
+        async function verifyAndStartService() {
+            if (serviceRunning) {
+                Logger.warning("服务已在运行中");
+                return;
+            }
+            
+            Logger.info("开始验证并启动服务...");
+            const verifySuccess = await initApiKey();
+            
+            if (verifySuccess) {
+                Logger.info("验证成功，启动服务...");
+                serviceRunning = true;
+                document.getElementById("startServiceBtn").disabled = true;
+                document.getElementById("startServiceBtn").classList.add("bg-gray-400");
+                document.getElementById("startServiceBtn").classList.remove("bg-green-600");
+                document.getElementById("stopServiceBtn").disabled = false;
+                document.getElementById("stopServiceBtn").classList.remove("bg-gray-400");
+                document.getElementById("stopServiceBtn").classList.add("bg-red-600");
+                
+                // 启动主服务
+                get_available_bets();
+                flush_schedule_bet();
+                
+                // 启动主定时器
+                mainInterval = setInterval(() => {
+                    const now = new Date();
+                    if (now.getMinutes() === 1 || now.getMinutes() === 31) {
+                        Logger.info("定时刷新项目");
+                        get_available_bets();
+                    }
+                    if (now.getMinutes() === 2 || now.getMinutes() === 32) {
+                        Logger.info("定时刷新任务");
+                        flush_schedule_bet();
+                    }
+                }, 60000);
+                
+                Logger.info("服务启动成功");
+            } else {
+                Logger.error("验证失败，无法启动服务");
+            }
+        }
+
+        // 新增：停止服务
+        function stopService() {
+            if (!serviceRunning) {
+                Logger.warning("服务未在运行中");
+                return;
+            }
+            
+            Logger.info("停止服务...");
+            
+            // 清除所有定时器
+            if (mainInterval) clearInterval(mainInterval);
+            if (CONFIG.autoRefresh.timer) clearInterval(CONFIG.autoRefresh.timer);
+            CONFIG.state.scheduler_jobs.forEach(clearTimeout);
+            
+            // 重置状态
+            serviceRunning = false;
+            CONFIG.state.autoBetEnabled = false;
+            CONFIG.autoRefresh.enabled = false;
+            
+            // 更新按钮状态
+            document.getElementById("startServiceBtn").disabled = false;
+            document.getElementById("startServiceBtn").classList.remove("bg-gray-400");
+            document.getElementById("startServiceBtn").classList.add("bg-green-600");
+            document.getElementById("stopServiceBtn").disabled = true;
+            document.getElementById("stopServiceBtn").classList.add("bg-gray-400");
+            document.getElementById("stopServiceBtn").classList.remove("bg-red-600");
+            document.getElementById("autoRefreshBtn").textContent = "启用自动刷新";
+            document.getElementById("autoRefreshBtn").classList.remove("bg-red-500");
+            document.getElementById("autoRefreshBtn").classList.add("bg-green-500");
+            
+            Logger.info("服务已停止");
+        }
+
+        // 增强：自动刷新功能
+        function toggleAutoRefresh() {
+            if (!serviceRunning) {
+                Logger.warning("请先启动服务");
+                return;
+            }
+            
+            if (CONFIG.autoRefresh.enabled) {
+                clearInterval(CONFIG.autoRefresh.timer);
+                CONFIG.autoRefresh.enabled = false;
+                Logger.info("自动刷新已关闭");
+                document.getElementById("autoRefreshBtn").textContent = "启用自动刷新";
+                document.getElementById("autoRefreshBtn").classList.remove("bg-red-500");
+                document.getElementById("autoRefreshBtn").classList.add("bg-green-500");
+            } else {
+                CONFIG.autoRefresh.enabled = true;
+                Logger.info(`自动刷新已启用（${CONFIG.autoRefresh.interval}秒）`);
+                document.getElementById("autoRefreshBtn").textContent = "关闭自动刷新";
+                document.getElementById("autoRefreshBtn").classList.remove("bg-green-500");
+                document.getElementById("autoRefreshBtn").classList.add("bg-red-500");
+                get_available_bets();
+                CONFIG.autoRefresh.timer = setInterval(() => {
+                    Logger.info(`自动刷新项目（间隔 ${CONFIG.autoRefresh.interval} 秒）`);
+                    get_available_bets();
+                }, CONFIG.autoRefresh.interval * 1000);
+            }
+        }
+
+        function changeRefreshInterval() {
+            const interval = parseInt(document.getElementById("refreshInterval").value);
+            if (interval && interval > 0 && interval <= 300) {
+                CONFIG.autoRefresh.interval = interval;
+                Logger.info(`刷新间隔已改为 ${interval} 秒`);
+                if (CONFIG.autoRefresh.enabled) {
+                    clearInterval(CONFIG.autoRefresh.timer);
+                    CONFIG.autoRefresh.timer = setInterval(() => {
+                        Logger.info(`自动刷新项目（间隔 ${CONFIG.autoRefresh.interval} 秒）`);
+                        get_available_bets();
+                    }, CONFIG.autoRefresh.interval * 1000);
+                }
+            } else {
+                Logger.error("请输入1-300之间的数字");
+            }
+        }
+
+        // 渲染函数
+        function renderBetsTable() {
+            const table = document.getElementById("betsTable");
+            if (!table) return;
+            
+            let html = `
+                <tr class="bg-gray-100">
+                    <th class="border p-2">项目ID</th>
+                    <th class="border p-2">描述</th>
+                    <th class="border p-2">结束时间</th>
+                    <th class="border p-2">选项</th>
+                    <th class="border p-2">操作</th>
+                </tr>
+            `;
+            
+            CONFIG.state.available_bets.forEach(bet => {
+                const betMask = CONFIG.state.bet_mask[bet.id] || [];
+                html += `
+                <tr class="hover:bg-gray-50">
+                    <td class="border p-2">${bet.id}</td>
+                    <td class="border p-2">${bet.heading}<br><small>${bet.undertext}</small></td>
+                    <td class="border p-2">${bet.endtime}</td>
+                    <td class="border p-2">
+                        ${bet.optionsList.map(opt => `
+                            <div class="flex items-center gap-2 mb-1">
+                                <span>ID: ${opt.id}</span>
+                                <span class="text-yellow-600">赔率: ${parseFloat(opt.odds).toFixed(3)}</span>
+                                <span>${opt.text}</span>
+                                ${betMask.includes(opt.id) ? 
+                                    '<span class="text-green-600"><i class="fa fa-check"></i> 已投注</span>' : ''}
+                            </div>
+                        `).join('')}
+                    </td>
+                    <td class="border p-2">
+                        <button onclick="bet({bet_id: '${bet.id}', endtime: '${bet.endtime}'})" 
+                            class="bg-green-500 text-white px-2 py-1 rounded text-sm">
+                            立即投注
+                        </button>
+                    </td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        function renderConfigTable() {
+            const table = document.getElementById("configTable");
+            if (!table) return;
+            
+            let html = `
+                <tr class="bg-gray-100">
+                    <th class="border p-2">项目ID</th>
+                    <th class="border p-2">描述</th>
+                    <th class="border p-2">结束时间</th>
+                    <th class="border p-2">计划时间</th>
+                    <th class="border p-2">状态</th>
+                </tr>
+            `;
+            
+            Object.values(CONFIG.state.configs).forEach(cfg => {
+                const isPending = new Date(cfg.scheduled_time) > new Date();
+                html += `
+                <tr class="hover:bg-gray-50">
+                    <td class="border p-2">${cfg.bet_id}</td>
+                    <td class="border p-2">${cfg.desc}</td>
+                    <td class="border p-2">${cfg.endtime}</td>
+                    <td class="border p-2">${cfg.scheduled_time}</td>
+                    <td class="border p-2">${isPending ? 
+                        '<span class="text-green-600">等待中</span>' : 
+                        '<span class="text-gray-500">已过期</span>'}
+                    </td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        // 新增：渲染刷新任务日志
+        function renderRefreshLog() {
+            const table = document.getElementById("refreshLogTable");
+            if (!table) return;
+            
+            let html = `
+                <tr class="bg-gray-100">
+                    <th class="border p-2">时间</th>
+                    <th class="border p-2">项目数量</th>
+                    <th class="border p-2">耗时</th>
+                </tr>
+            `;
+            
+            CONFIG.autoRefresh.taskLog.forEach(log => {
+                html += `
+                <tr class="hover:bg-gray-50">
+                    <td class="border p-2">${log.time}</td>
+                    <td class="border p-2">${log.count}</td>
+                    <td class="border p-2">${log.duration}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        function handleCommand(cmd) {
+            switch(cmd) {
+                case "list_schedule":
+                    Logger.info(`当前任务数: ${CONFIG.state.scheduler_jobs.length}`);
+                    break;
+                case "reload_cfg":
+                    flush_schedule_bet();
+                    break;
+                case "refresh":
+                    get_available_bets();
+                    break;
+                case "auto_refresh_on":
+                    toggleAutoRefresh();
+                    break;
+                case "auto_refresh_off":
+                    toggleAutoRefresh();
+                    break;
+                case "start":
+                    verifyAndStartService();
+                    break;
+                case "stop":
+                    stopService();
+                    break;
+                case "status":
+                    Logger.info(`服务状态: ${serviceRunning ? "运行中" : "已停止"}`);
+                    Logger.info(`自动刷新: ${CONFIG.autoRefresh.enabled ? "开启" : "关闭"} (${CONFIG.autoRefresh.interval}秒)`);
+                    Logger.info(`当前任务数: ${CONFIG.state.scheduler_jobs.length}`);
+                    break;
+                case "h":
+                    Logger.info("命令: list_schedule, reload_cfg, refresh, auto_refresh_on, auto_refresh_off, start, stop, status, h, q");
+                    break;
+                case "q":
+                    window.close();
+                    break;
+                default:
+                    Logger.warning("未知命令，输入h查看帮助");
+            }
+        }
+
+        // 页面初始化
+        document.addEventListener("DOMContentLoaded", () => {
+            Logger.info("系统启动中...");
+            
+            if (window.location.protocol === "file:") {
+                Logger.warning("检测到本地文件模式，推荐使用Firefox浏览器获得最佳兼容性");
+                Logger.warning("如使用Chrome，请按日志提示配置浏览器参数");
+            }
+
+            // 检查Axios加载
+            const checkAxios = setInterval(() => {
+                if (typeof axios !== 'undefined') {
+                    axiosLoaded = true;
+                    clearInterval(checkAxios);
+                    Logger.info("核心库加载成功");
+                    
+                    // 绑定事件
+                    document.getElementById("apiKeyForm").addEventListener("submit", (e) => {
+                        e.preventDefault();
+                        initApiKey();
+                    });
+
+                    document.getElementById("paramForm").addEventListener("submit", (e) => {
+                        e.preventDefault();
+                        CONFIG.args = {
+                            target_uid: document.getElementById("targetUid").value,
+                            bias: parseInt(document.getElementById("bias").value),
+                            tolerance: parseInt(document.getElementById("tolerance").value),
+                            bias_range: parseInt(document.getElementById("biasRange").value),
+                            bonus: parseInt(document.getElementById("bonus").value),
+                            policy: document.getElementById("policy").value,
+                            verbose: document.getElementById("verbose").checked
+                        };
+                        Logger.info("参数已更新");
+                        flush_schedule_bet();
+                    });
+
+                    document.getElementById("commandForm").addEventListener("submit", (e) => {
+                        e.preventDefault();
+                        handleCommand(document.getElementById("commandInput").value);
+                        document.getElementById("commandInput").value = "";
+                    });
+
+                    // 绑定服务控制按钮
+                    document.getElementById("startServiceBtn").addEventListener("click", verifyAndStartService);
+                    document.getElementById("stopServiceBtn").addEventListener("click", stopService);
+                    document.getElementById("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
+                    document.getElementById("setIntervalBtn").addEventListener("click", changeRefreshInterval);
+                    document.getElementById("refreshLogBtn").addEventListener("click", renderRefreshLog);
+
+                    // 加载保存的API Key
+                    const savedKey = localStorage.getItem("MTAPIKEY");
+                    if (savedKey) {
+                        document.getElementById("apiKeyInput").value = savedKey;
+                    }
+                }
+            }, 100);
+
+            // 超时检测
+            setTimeout(() => {
+                if (!axiosLoaded) {
+                    Logger.error("核心库加载超时，尝试备用加载...");
+                    const script = document.createElement('script');
+                    script.src = 'https://unpkg.com/axios@1.6.2/dist/axios.min.js';
+                    script.onload = () => {
+                        axiosLoaded = true;
+                        Logger.info("备用核心库加载成功");
+                    };
+                    document.head.appendChild(script);
+                }
+            }, 5000);
+        });
+    </script>
 </head>
+<body class="bg-gray-50">
+    <div class="container mx-auto p-4">
+        <h1 class="text-2xl font-bold mb-4 text-blue-600">M-Team 投注系统</h1>
 
-<body class="dark:bg-black">
-	<div id="app">
-		<style>
-			.loading-wrap {
-				display: flex;
-				justify-content: center;
-				align-items: center;
-				height: 100vh;
-			}
+        <!-- 服务控制区 -->
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">服务控制</h2>
+            <div class="flex flex-wrap gap-2">
+                <button id="startServiceBtn" class="bg-green-600 text-white px-4 py-2 rounded">
+                    <i class="fa fa-play mr-1"></i> 验证并启动服务
+                </button>
+                <button id="stopServiceBtn" class="bg-gray-400 text-white px-4 py-2 rounded" disabled>
+                    <i class="fa fa-stop mr-1"></i> 停止服务
+                </button>
+                <button id="refreshLogBtn" class="bg-blue-600 text-white px-4 py-2 rounded">
+                    <i class="fa fa-history mr-1"></i> 查看刷新日志
+                </button>
+            </div>
+        </div>
 
-			.balls {
-				width: 4em;
-				display: flex;
-				flex-flow: row nowrap;
-				align-items: center;
-				justify-content: space-between;
-			}
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">API 配置</h2>
+            <form id="apiKeyForm" class="flex gap-2">
+                <input type="text" id="apiKeyInput" placeholder="输入API Key" 
+                    class="flex-1 p-2 border rounded">
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">
+                    仅验证API Key
+                </button>
+            </form>
+        </div>
 
-			.balls div {
-				width: 0.8em;
-				height: 0.8em;
-				border-radius: 50%;
-				background-color: #4b9e5f;
-			}
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">参数设置</h2>
+            <form id="paramForm" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm mb-1">目标用户ID</label>
+                    <input type="text" id="targetUid" value="205809" class="w-full p-2 border rounded">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">提前下注秒数</label>
+                    <input type="number" id="bias" value="3" class="w-full p-2 border rounded">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">容忍秒数</label>
+                    <input type="number" id="tolerance" value="10" class="w-full p-2 border rounded">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">金额波动范围</label>
+                    <input type="number" id="biasRange" value="20000" class="w-full p-2 border rounded">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">基础金额</label>
+                    <input type="number" id="bonus" value="10000" class="w-full p-2 border rounded">
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">投注策略</label>
+                    <select id="policy" class="w-full p-2 border rounded">
+                        <option value="larger">larger (押大)</option>
+                        <option value="smaller">smaller (押小)</option>
+                        <option value="follow">follow (跟随)</option>
+                    </select>
+                </div>
+                <div class="md:col-span-3">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" id="verbose" class="w-4 h-4">
+                        <span>详细日志模式</span>
+                    </label>
+                </div>
+                <div class="md:col-span-3 flex justify-end">
+                    <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded">
+                        保存参数
+                    </button>
+                </div>
+            </form>
+        </div>
 
-			.balls div:nth-of-type(1) {
-				transform: translateX(-100%);
-				animation: left-swing 0.5s ease-in alternate infinite;
-			}
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <div class="flex justify-between items-center mb-2">
+                <h2 class="text-xl font-semibold">可投注项目</h2>
+                <div class="flex gap-2">
+                    <div class="flex items-center">
+                        <input type="number" id="refreshInterval" value="30" min="1" max="300" 
+                            class="w-20 p-1 border rounded text-sm">
+                        <button id="setIntervalBtn" class="bg-blue-500 text-white px-2 py-1 rounded text-sm">
+                            设置间隔
+                        </button>
+                    </div>
+                    <button id="autoRefreshBtn" class="bg-green-500 text-white px-4 py-1 rounded text-sm">
+                        启用自动刷新
+                    </button>
+                    <button onclick="get_available_bets()" class="bg-blue-500 text-white px-4 py-1 rounded text-sm">
+                        手动刷新
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table id="betsTable" class="min-w-full border-collapse">
+                    <tr><td colspan="5" class="text-center p-4">请先启动服务</td></tr>
+                </table>
+            </div>
+        </div>
 
-			.balls div:nth-of-type(3) {
-				transform: translateX(-95%);
-				animation: right-swing 0.5s ease-out alternate infinite;
-			}
+        <!-- 刷新任务日志 -->
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">刷新任务日志</h2>
+            <div class="overflow-x-auto">
+                <table id="refreshLogTable" class="min-w-full border-collapse">
+                    <tr><td colspan="3" class="text-center p-4">暂无刷新记录</td></tr>
+                </table>
+            </div>
+        </div>
 
-			@keyframes left-swing {
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">定时任务配置</h2>
+            <div class="overflow-x-auto">
+                <table id="configTable" class="min-w-full border-collapse">
+                    <tr><td colspan="5" class="text-center p-4">请先启动服务</td></tr>
+                </table>
+            </div>
+            <div class="mt-2">
+                <button onclick="flush_schedule_bet()" class="bg-purple-500 text-white px-4 py-1 rounded text-sm">
+                    刷新任务
+                </button>
+            </div>
+        </div>
 
-				50%,
-				100% {
-					transform: translateX(95%);
-				}
-			}
+        <div class="bg-white p-4 rounded shadow mb-4">
+            <h2 class="text-xl font-semibold mb-2">命令行</h2>
+            <form id="commandForm" class="flex gap-2">
+                <input type="text" id="commandInput" placeholder="输入命令 (h 查看帮助)" 
+                    class="flex-1 p-2 border rounded">
+                <button type="submit" class="bg-gray-600 text-white px-4 py-2 rounded">
+                    执行
+                </button>
+            </form>
+        </div>
 
-			@keyframes right-swing {
-				50% {
-					transform: translateX(-95%);
-				}
-
-				100% {
-					transform: translateX(100%);
-				}
-			}
-
-			@media (prefers-color-scheme: dark) {
-				body {
-					background: #121212;
-				}
-			}
-		</style>
-		<div class="loading-wrap">
-			<div class="balls">
-				<div></div>
-				<div></div>
-				<div></div>
-			</div>
-		</div>
-	</div>
-	<script type="module" src="/src/main.ts"></script>
-	<script src="/custom/index.js"></script>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="text-xl font-semibold mb-2">系统日志</h2>
+            <div id="logPanel" class="h-60 overflow-y-auto p-2 bg-gray-50 rounded text-sm">
+                系统启动中...
+            </div>
+        </div>
+    </div>
 </body>
-
 </html>

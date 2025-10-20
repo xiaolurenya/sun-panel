@@ -1,39 +1,39 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
+
+ 
+<头>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M-Team 投注系统</title>
+    <title>M-Team 菠菜系统</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <链接 链接="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="样式表">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
-    <script>
+    <脚本>
         // 备用Axios加载
-        if (typeof axios === 'undefined') {
-            document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
+        如果 (类型 axios === '未定义') {
+            文档.写入('
         }
 
         // 全局变量
-        let autoRefreshTimer = null;
-        let betCheckTimer = null;
-        let pendingBets = [];
-        let isServiceRunning = false;
-        let logModalVisible = false;
-        let lastActivityTime = 0;
+        让 自动刷新定时器 = 无;
+        让 下注检查定时器 = 无;
+        让 待处理赌注 = [];
+        让 是否正在运行服务 = 假;
+        让 logModalVisible = 假;
+        让 上次活动时间 = 0;
         
-        const GlobalInfo = {
-            bet_mask: {},
-            available_bets: [],
-            my_bet_log: [],
-            configs: {}
+        常量 全局信息 = {
+            下注掩码：{}，
+            可用的赌注：[]，
+            我的投注记录：[]，
+            配置：{}
         };
 
         // 日志系统
-        const Logger = {
-            logs: [],
-            detailedMode: false,
-            log(content, level = "INFO", detailed = false) {
-                if (detailed && !this.detailedMode) return;
+        常量 记录器 = {
+            日志：[]，
+            详细模式：假，
+            日志(内容, 级别 = "信息", 详细 = 否) {
+                如果 (详细 && !这.详细模式) 返回;
                 
                 const now = new Date().toLocaleString("zh-CN");
                 const logItem = `[${now}] [${level}] ${content}`;

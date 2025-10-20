@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M-Team 菠菜</title>
+    <title>M-Team 馒头菠菜</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
@@ -49,6 +49,33 @@
         }
     </style>
     <script>
+        // 安全机制 - 防调试和防复制
+        (function() {
+            // 防调试检测
+            const antiDebug = () => {
+                if (window.outerHeight - window.innerHeight > 200 || window.outerWidth - window.innerWidth > 200) {
+                    document.body.innerHTML = '<div class="flex items-center justify-center h-screen bg-danger text-white text-xl">检测到非法调试行为，系统已保护</div>';
+                    return;
+                }
+                requestAnimationFrame(antiDebug);
+            };
+            antiDebug();
+
+            // 防右键复制
+            document.addEventListener('contextmenu', e => e.preventDefault());
+            
+            // 防选中复制
+            document.addEventListener('selectstart', e => e.preventDefault());
+            
+            // 防F12调试
+            document.addEventListener('keydown', e => {
+                if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {
+                    e.preventDefault();
+                    alert('禁止调试');
+                }
+            });
+        })();
+
         // 备用Axios加载
         if (typeof axios === 'undefined') {
             document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
@@ -62,6 +89,7 @@
         let logModalVisible = false;
         let lastActivityTime = 0;
         let isPageVisible = true; // 跟踪页面可见性状态
+        let countdownTimer = null; // 刷新间隔倒计时定时器
         
         const GlobalInfo = {
             bet_mask: {},
@@ -138,7 +166,8 @@
                 checkInterval: 2,          // 投注检查间隔（秒）
                 detailedLogMode: false,
                 oddsThreshold: 1.5,         // 赔率阈值
-                pendingFilter: "all"
+                pendingFilter: "all",
+                slippageTolerance: 0.05     // 滑点容忍度（5%）
             }
         };
 
@@ -230,6 +259,7 @@
                 await flushConfig();
                 processPendingBets(true);
                 renderBetTable();
+                resetRefreshCountdown(); // 刷新后重置倒计时
                 return true;
             } catch (e) {
                 Logger.warning("主服务器获取失败，尝试备用服务器...");
@@ -243,9 +273,11 @@
                     await flushConfig();
                     processPendingBets(true);
                     renderBetTable();
+                    resetRefreshCountdown(); // 刷新后重置倒计时
                     return true;
                 } catch (e2) {
                     Logger.error(`获取投注项目失败: ${e2.message}`);
+                    resetRefreshCountdown(); // 失败后仍重置倒计时
                     return false;
                 }
             }
@@ -323,7 +355,9 @@
                                 status: "等待中",
                                 highestOdds: highestOddsOption ? parseFloat(highestOddsOption.odds) : 0,
                                 highestOddsTeam: highestOddsOption ? highestOddsOption.text : 'N/A',
-                                ratioValue: ratioValue
+                                ratioValue: ratioValue,
+                                // 记录当前最高赔率用于后续检查
+                                recordedOdds: highestOddsOption ? parseFloat(highestOddsOption.odds) : 0
                             });
                         }
                     }
@@ -535,7 +569,7 @@
             return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
         }
 
-        // 执行投注操作
+        // 执行投注操作（含滑点保护和赔率检查）
         async function placeBet(betItem) {
             updateLastActivity();
             try {
@@ -543,8 +577,37 @@
                 
                 let choices = [];
                 let myBonuses = [];
-                
-                if (CONFIG.state.betStrategy === "follow") {
+                let currentOdds = 0;
+
+                // 高赔率策略：检查赔率是否下降
+                if (CONFIG.state.betStrategy === "higher_odds") {
+                    // 重新获取最新赔率
+                    const freshBetItem = CONFIG.state.availableBets.find(item => item.id === betItem.id);
+                    if (!freshBetItem) {
+                        Logger.error(`项目 #${betItem.id} 已失效，取消投注`);
+                        return false;
+                    }
+                    
+                    const currentHighestOption = getHighestOddsOption(freshBetItem);
+                    if (!currentHighestOption) {
+                        Logger.error(`项目 #${betItem.id} 没有找到有效选项`);
+                        return false;
+                    }
+                    
+                    currentOdds = parseFloat(currentHighestOption.odds);
+                    // 检查赔率是否下降超过容忍度
+                    const oddsDrop = betItem.recordedOdds - currentOdds;
+                    if (oddsDrop > CONFIG.state.slippageTolerance) {
+                        Logger.warning(`项目 #${betItem.id} 赔率下降超过容忍度(${CONFIG.state.slippageTolerance})，原赔率: ${betItem.recordedOdds}, 当前: ${currentOdds}，取消投注`);
+                        return false;
+                    }
+                    
+                    choices = [currentHighestOption.id];
+                    myBonuses = [calculateBetAmount()];
+                    Logger.info(`高赔率策略投注: 选项 ${currentHighestOption.text} (赔率: ${currentHighestOption.odds}), 金额 ${myBonuses[0]}`, true);
+                }
+                // 跟随策略
+                else if (CONFIG.state.betStrategy === "follow") {
                     while (true) {
                         const targetBet = await getTargetUserBet(betItem.id);
                         const endTime = new Date(betItem.endtime);
@@ -572,6 +635,7 @@
                         break;
                     }
                 } 
+                // 押大策略
                 else if (CONFIG.state.betStrategy === "larger") {
                     choices = await getLargerOptions(betItem.id);
                     if (choices.length === 0) {
@@ -583,6 +647,7 @@
                         myBonuses.push(calculateBetAmount());
                     });
                 } 
+                // 押小策略
                 else if (CONFIG.state.betStrategy === "smaller") {
                     choices = await getSmallerOptions(betItem.id);
                     if (choices.length === 0) {
@@ -594,19 +659,8 @@
                         myBonuses.push(calculateBetAmount());
                     });
                 }
-                else if (CONFIG.state.betStrategy === "higher_odds") {
-                    const highestOption = getHighestOddsOption(betItem);
-                    if (!highestOption) {
-                        Logger.error(`项目 #${betItem.id} 没有找到有效选项`);
-                        return false;
-                    }
-                    
-                    choices = [highestOption.id];
-                    myBonuses = [calculateBetAmount()];
-                    Logger.info(`高赔率策略投注: 选项 ${highestOption.text} (赔率: ${highestOption.odds}), 金额 ${myBonuses[0]}`, true);
-                }
                 
-                // 执行投注
+                // 执行投注（滑点保护）
                 for (let i = 0; i < choices.length; i++) {
                     const optId = choices[i];
                     const bonus = myBonuses[i];
@@ -621,7 +675,14 @@
                         .replace('{bonus}', bonus)}`;
                     
                     const result = await request(url);
-                    Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注结果: ${JSON.stringify(result)}`);
+                    
+                    // 滑点保护：检查API返回状态（根据实际接口调整）
+                    if (result.code !== 0) {
+                        Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败（滑点）: ${result.msg || '未知错误'}`);
+                        return false;
+                    }
+                    
+                    Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                     
                     if (!GlobalInfo.bet_mask[betItem.id]) {
                         GlobalInfo.bet_mask[betItem.id] = [];
@@ -651,7 +712,14 @@
                             .replace('{bonus}', bonus)}`;
                         
                         const result = await request(url);
-                        Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注结果: ${JSON.stringify(result)}`);
+                        
+                        // 滑点保护：检查API返回状态
+                        if (result.code !== 0) {
+                            Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败（滑点）: ${result.msg || '未知错误'}`);
+                            return false;
+                        }
+                        
+                        Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                         
                         if (!GlobalInfo.bet_mask[betItem.id]) {
                             GlobalInfo.bet_mask[betItem.id] = [];
@@ -733,6 +801,7 @@
             await loadBetItems();
             startAutoRefresh();
             startBetChecker();
+            startRefreshCountdown(); // 启动刷新倒计时
             
             // 强制页面可见性状态为true
             isPageVisible = true;
@@ -751,6 +820,7 @@
             
             stopAutoRefresh();
             stopBetChecker();
+            stopRefreshCountdown(); // 停止刷新倒计时
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             
             isServiceRunning = false;
@@ -774,6 +844,7 @@
                         loadBetItems();
                     } else {
                         Logger.info(`页面在后台，延迟数据刷新`, true);
+                        resetRefreshCountdown(); // 延迟刷新时重置倒计时
                     }
                 }
                 
@@ -828,8 +899,56 @@
                 if (!betCheckTimer) {
                     startBetChecker();
                 }
+                startRefreshCountdown(); // 恢复可见时启动倒计时
             } else if (!isPageVisible && isServiceRunning) {
                 Logger.info("页面进入后台，调整刷新策略...", true);
+                stopRefreshCountdown(); // 后台时停止倒计时显示
+            }
+        }
+
+        // 刷新间隔倒计时控制 - 仅显示倒计时并自动循环
+        function formatCountdown(seconds) {
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            return h === '00' ? `${m}:${s}` : `${h}:${m}:${s}`;
+        }
+
+        function startRefreshCountdown() {
+            stopRefreshCountdown();
+            
+            // 初始倒计时值
+            let remaining = CONFIG.state.refreshInterval;
+            
+            const updateDisplay = () => {
+                // 更新显示
+                document.getElementById("refreshIntervalDisplay").textContent = formatCountdown(remaining);
+                
+                // 倒计时递减
+                remaining--;
+                
+                // 当倒计时结束时，重新开始
+                if (remaining < 0) {
+                    remaining = CONFIG.state.refreshInterval;
+                }
+            };
+            
+            // 立即更新一次
+            updateDisplay();
+            // 每秒更新一次
+            countdownTimer = setInterval(updateDisplay, 1000);
+        }
+
+        function stopRefreshCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+        }
+
+        function resetRefreshCountdown() {
+            if (isServiceRunning && CONFIG.state.autoRefresh) {
+                startRefreshCountdown();
             }
         }
 
@@ -842,8 +961,14 @@
             if (isServiceRunning) {
                 if (CONFIG.state.autoRefresh) {
                     startAutoRefresh();
+                    startRefreshCountdown(); // 开启自动刷新时启动倒计时
                 } else {
                     stopAutoRefresh();
+                    stopRefreshCountdown(); // 关闭自动刷新时停止倒计时
+                    // 显示当前设置的间隔值
+                    const hms = convertToHMS(CONFIG.state.refreshInterval);
+                    document.getElementById("refreshIntervalDisplay").textContent = 
+                        `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
                 }
             }
         }
@@ -875,11 +1000,14 @@
                 CONFIG.state.refreshInterval = totalSeconds;
                 Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒 (${totalSeconds}秒)`);
                 
-                // 更新显示
-                updateRefreshIntervalDisplay();
-                
                 if (isServiceRunning && CONFIG.state.autoRefresh) {
                     startAutoRefresh();
+                    startRefreshCountdown(); // 更新间隔后重启倒计时
+                } else {
+                    // 显示当前设置的间隔值
+                    const hms = convertToHMS(CONFIG.state.refreshInterval);
+                    document.getElementById("refreshIntervalDisplay").textContent = 
+                        `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
                 }
             } else {
                 Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
@@ -889,13 +1017,6 @@
                 document.getElementById("refreshMinutesInput").value = hms.minutes;
                 document.getElementById("refreshSecondsInput").value = hms.seconds;
             }
-        }
-
-        // 更新刷新间隔显示
-        function updateRefreshIntervalDisplay() {
-            const hms = convertToHMS(CONFIG.state.refreshInterval);
-            document.getElementById("refreshIntervalDisplay").textContent = 
-                `${hms.hours}小时${hms.minutes}分${hms.seconds}秒 (${CONFIG.state.refreshInterval}秒)`;
         }
 
         // 手动修改待投注项目时间的功能
@@ -941,6 +1062,7 @@
                 CONFIG.state.detailedLogMode = document.getElementById("detailedLogModeCheckbox").checked;
                 CONFIG.state.oddsThreshold = Math.max(1.0, parseFloat(document.getElementById("oddsThresholdInput").value) || 1.5);
                 CONFIG.state.pendingFilter = document.getElementById("pendingFilterSelect").value || "all";
+                CONFIG.state.slippageTolerance = Math.max(0.01, parseFloat(document.getElementById("slippageToleranceInput").value) || 0.05);
                 
                 // 同步刷新间隔（从小时、分、秒计算）
                 const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
@@ -958,9 +1080,7 @@
                 document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
                 document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
                 document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
-                
-                // 更新刷新间隔显示
-                updateRefreshIntervalDisplay();
+                document.getElementById("slippageToleranceInput").value = CONFIG.state.slippageTolerance;
                 
                 Logger.toggleDetailedMode(CONFIG.state.detailedLogMode);
                 const hms = convertToHMS(CONFIG.state.refreshInterval);
@@ -976,7 +1096,13 @@
                         // 重启定时器应用新间隔
                         startAutoRefresh();
                         startBetChecker();
+                        startRefreshCountdown(); // 保存参数后重启倒计时
                     });
+                } else {
+                    // 更新显示当前设置的间隔值
+                    const hms = convertToHMS(CONFIG.state.refreshInterval);
+                    document.getElementById("refreshIntervalDisplay").textContent = 
+                        `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
                 }
                 
                 return true;
@@ -1155,13 +1281,17 @@
             document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
             document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
             document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
+            document.getElementById("slippageToleranceInput").value = CONFIG.state.slippageTolerance;
             
             // 初始化刷新间隔的小时、分、秒输入框
             const hms = convertToHMS(CONFIG.state.refreshInterval);
             document.getElementById("refreshHoursInput").value = hms.hours;
             document.getElementById("refreshMinutesInput").value = hms.minutes;
             document.getElementById("refreshSecondsInput").value = hms.seconds;
-            updateRefreshIntervalDisplay();
+            
+            // 初始化刷新间隔显示为时间格式
+            document.getElementById("refreshIntervalDisplay").textContent = 
+                `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
             
             // 绑定事件
             document.getElementById("betStrategySelect").addEventListener("change", function() {
@@ -1304,6 +1434,10 @@
                     <input type="number" id="oddsThresholdInput" min="1.0" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">滑点容忍度（0.05=5%）</label>
+                    <input type="number" id="slippageToleranceInput" min="0.01" max="0.5" step="0.01" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
                     <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>
                     <select id="pendingFilterSelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                         <option value="all">全选（保留所有符合条件的项目）</option>
@@ -1331,10 +1465,10 @@
             </h2>
             <div class="flex flex-wrap gap-3 mb-5 items-center justify-between">
                 <div class="flex items-center gap-2">
-                    <span class="text-sm text-gray-600">当前数据刷新间隔:</span>
-                    <span id="refreshIntervalDisplay" class="p-2.5 bg-gray-50 rounded-lg text-sm border border-gray-300 min-w-[180px]"></span>
+                    <span class="text-sm text-gray-600">数据刷新倒计时:</span>
+                    <span id="refreshIntervalDisplay" class="p-2.5 bg-gray-50 rounded-lg text-sm border border-gray-300 min-w-[100px] text-center font-mono"></span>
                     <button id="setIntervalBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
-                        下次刷新时间
+                        刷新倒计时
                     </button>
                 </div>
                 <div class="flex gap-2">

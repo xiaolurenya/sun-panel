@@ -46,6 +46,17 @@
             .table-hover-row:hover {
                 background-color: rgba(22, 93, 255, 0.03);
             }
+            .countdown-text {
+                color: #165DFF;
+                font-weight: 600;
+                transition: color 0.3s;
+            }
+            .countdown-warning {
+                color: #FAAD14;
+            }
+            .countdown-danger {
+                color: #FF4D4F;
+            }
         }
     </style>
     <script>
@@ -54,7 +65,7 @@
             document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
         }
 
-        // 全局变量
+        // 全局变量 - 新增倒计时定时器
         let autoRefreshTimer = null;
         let betCheckTimer = null;
         let pendingBets = [];
@@ -62,6 +73,8 @@
         let logModalVisible = false;
         let lastActivityTime = 0;
         let isPageVisible = true; // 跟踪页面可见性状态
+        let countdownTimer = null; // 倒计时定时器
+        let nextRefreshTime = 0; // 下次刷新时间戳
         
         const GlobalInfo = {
             bet_mask: {},
@@ -230,6 +243,8 @@
                 await flushConfig();
                 processPendingBets(true);
                 renderBetTable();
+                // 刷新成功后，重置下次刷新时间和倒计时
+                resetCountdown();
                 return true;
             } catch (e) {
                 Logger.warning("主服务器获取失败，尝试备用服务器...");
@@ -243,9 +258,13 @@
                     await flushConfig();
                     processPendingBets(true);
                     renderBetTable();
+                    // 刷新成功后，重置下次刷新时间和倒计时
+                    resetCountdown();
                     return true;
                 } catch (e2) {
                     Logger.error(`获取投注项目失败: ${e2.message}`);
+                    // 刷新失败仍重置倒计时（避免倒计时卡住）
+                    resetCountdown();
                     return false;
                 }
             }
@@ -751,6 +770,8 @@
             
             stopAutoRefresh();
             stopBetChecker();
+            // 停止倒计时定时器
+            stopCountdown();
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             
             isServiceRunning = false;
@@ -774,14 +795,19 @@
                         loadBetItems();
                     } else {
                         Logger.info(`页面在后台，延迟数据刷新`, true);
+                        // 页面后台时仍重置倒计时（避免倒计时卡住）
+                        resetCountdown();
                     }
                 }
                 
                 // 无论页面状态如何，都安排下一次刷新
-                if (isServiceRunning) {
+                if (isServiceRunning && CONFIG.state.autoRefresh) {
                     const nextExecution = Date.now() + CONFIG.state.refreshInterval * 1000;
                     autoRefreshTimer = setTimeout(refresh, nextExecution - Date.now());
                     Logger.info(`下一次数据刷新时间: ${new Date(nextExecution).toLocaleTimeString()}`, true);
+                    // 更新下次刷新时间并启动倒计时
+                    nextRefreshTime = nextExecution;
+                    startCountdown();
                 }
             };
             
@@ -793,6 +819,8 @@
                 clearTimeout(autoRefreshTimer);
                 autoRefreshTimer = null;
             }
+            // 停止倒计时
+            stopCountdown();
         }
 
         // 投注检查器 - 确保后台也能运行
@@ -821,6 +849,9 @@
                 if (timeDiff > 60000) {
                     Logger.info(`页面在后台停留了 ${Math.floor(timeDiff/1000)} 秒，强制刷新数据`, true);
                     loadBetItems();
+                } else {
+                    // 恢复页面时重置倒计时（避免时间偏差）
+                    resetCountdown();
                 }
                 
                 // 重启定时器确保时间准确
@@ -844,6 +875,11 @@
                     startAutoRefresh();
                 } else {
                     stopAutoRefresh();
+                    // 关闭自动刷新时清空倒计时显示
+                    const countdownEl = document.getElementById("refreshCountdown");
+                    if (countdownEl) {
+                        countdownEl.innerHTML = '<span class="text-gray-500">自动刷新已关闭</span>';
+                    }
                 }
             }
         }
@@ -859,6 +895,75 @@
             const minutes = Math.floor((totalSeconds % 3600) / 60);
             const seconds = totalSeconds % 60;
             return { hours, minutes, seconds };
+        }
+
+        // 新增：格式化倒计时（补零显示）
+        function formatCountdown(seconds) {
+            if (seconds <= 0) return "00:00";
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // 新增：启动倒计时
+        function startCountdown() {
+            // 先停止现有倒计时
+            stopCountdown();
+            
+            // 若自动刷新关闭，不启动倒计时
+            if (!CONFIG.state.autoRefresh || !isServiceRunning) return;
+            
+            const updateCountdown = () => {
+                const now = Date.now();
+                const remaining = Math.max(0, Math.floor((nextRefreshTime - now) / 1000));
+                const countdownEl = document.getElementById("refreshCountdown");
+                const intervalDisplayEl = document.getElementById("refreshIntervalDisplay");
+                
+                if (countdownEl && intervalDisplayEl) {
+                    // 倒计时样式：<=10秒红色，<=30秒橙色，否则蓝色
+                    let countdownClass = "countdown-text";
+                    if (remaining <= 10) {
+                        countdownClass += " countdown-danger";
+                    } else if (remaining <= 30) {
+                        countdownClass += " countdown-warning";
+                    }
+                    
+                    // 更新倒计时显示（保留原间隔文本，新增倒计时）
+                    const intervalText = intervalDisplayEl.textContent;
+                    countdownEl.innerHTML = `
+                        <span class="${countdownClass}">${formatCountdown(remaining)}</span>
+                        <span class="text-gray-500 ml-2">后刷新 | 当前间隔: ${intervalText}</span>
+                    `;
+                }
+                
+                // 倒计时结束后自动停止（避免负数值）
+                if (remaining <= 0) {
+                    stopCountdown();
+                }
+            };
+            
+            // 立即更新一次，之后每秒更新
+            updateCountdown();
+            countdownTimer = setInterval(updateCountdown, 1000);
+        }
+
+        // 新增：停止倒计时
+        function stopCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+        }
+
+        // 新增：重置倒计时（刷新成功/间隔修改时调用）
+        function resetCountdown() {
+            if (!CONFIG.state.autoRefresh || !isServiceRunning) return;
+            // 更新下次刷新时间
+            nextRefreshTime = Date.now() + CONFIG.state.refreshInterval * 1000;
+            // 重启倒计时
+            startCountdown();
+            // 日志提示
+            Logger.info(`下次刷新倒计时已重置，将于 ${new Date(nextRefreshTime).toLocaleTimeString()} 执行`, true);
         }
 
         function setRefreshInterval() {
@@ -878,8 +983,10 @@
                 // 更新显示
                 updateRefreshIntervalDisplay();
                 
+                // 间隔修改后，重置倒计时
                 if (isServiceRunning && CONFIG.state.autoRefresh) {
                     startAutoRefresh();
+                    resetCountdown();
                 }
             } else {
                 Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
@@ -896,6 +1003,11 @@
             const hms = convertToHMS(CONFIG.state.refreshInterval);
             document.getElementById("refreshIntervalDisplay").textContent = 
                 `${hms.hours}小时${hms.minutes}分${hms.seconds}秒 (${CONFIG.state.refreshInterval}秒)`;
+            
+            // 间隔显示更新后，同步倒计时中的间隔文本
+            if (isServiceRunning && CONFIG.state.autoRefresh) {
+                startCountdown();
+            }
         }
 
         // 手动修改待投注项目时间的功能
@@ -973,7 +1085,7 @@
                         renderBetTable();
                         renderPendingBetsTable();
                         
-                        // 重启定时器应用新间隔
+                        // 重启定时器应用新间隔，同时重置倒计时
                         startAutoRefresh();
                         startBetChecker();
                     });
@@ -1008,6 +1120,11 @@
             } else {
                 startBtn.classList.remove("opacity-50", "cursor-not-allowed");
                 stopBtn.classList.add("opacity-50", "cursor-not-allowed");
+                // 服务停止时清空倒计时显示
+                const countdownEl = document.getElementById("refreshCountdown");
+                if (countdownEl) {
+                    countdownEl.innerHTML = '<span class="text-gray-500">服务已停止</span>';
+                }
             }
         }
 
@@ -1021,7 +1138,7 @@
                     <tr>
                         <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
-                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                <<i class="fa fa-inbox text-3xl mb-2 text-gray-300"></</i>
                                 <span>无可用投注项目</span>
                             </div>
                         </td>
@@ -1032,12 +1149,12 @@
             
             let html = `
                 <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
-                    <th class="border p-3 text-left font-semibold">最高赔率</th>
-                    <th class="border p-3 text-left font-semibold">结束时间</th>
-                    <th class="border p-3 text-left font-semibold">状态(提前${CONFIG.state.advanceSeconds}s下注)</th>
+                    <<th class="border p-3 text-left font-semibold">ID</</th>
+                    <<th class="border p-3 text-left font-semibold">描述</</th>
+                    <<th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</</th>
+                    <<th class="border p-3 text-left font-semibold">最高赔率</</th>
+                    <<th class="border p-3 text-left font-semibold">结束时间</</th>
+                    <<th class="border p-3 text-left font-semibold">状态(提前${CONFIG.state.advanceSeconds}s下注)</</th>
                 </tr>
             `;
             
@@ -1089,7 +1206,7 @@
                     <tr>
                         <td colspan="7" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
-                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
+                                <<i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></</i>
                                 <span>暂无待投注项目</span>
                             </div>
                         </td>
@@ -1100,13 +1217,13 @@
             
             let html = `
                 <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">投注对象 (赔率)</th>
-                    <th class="border p-3 text-left font-semibold">下注时间(提前${CONFIG.state.advanceSeconds}s)</th>
-                    <th class="border p-3 text-left font-semibold">金额</th>
-                    <th class="border p-3 text-left font-semibold">赔率×金额</th>
-                    <th class="border p-3 text-left font-semibold">状态</th>
+                    <<th class="border p-3 text-left font-semibold">ID</</th>
+                    <<th class="border p-3 text-left font-semibold">描述</</th>
+                    <<th class="border p-3 text-left font-semibold">投注对象 (赔率)</</th>
+                    <<th class="border p-3 text-left font-semibold">下注时间(提前${CONFIG.state.advanceSeconds}s)</</th>
+                    <<th class="border p-3 text-left font-semibold">金额</</th>
+                    <<th class="border p-3 text-left font-semibold">赔率×金额</</th>
+                    <<th class="border p-3 text-left font-semibold">状态</</th>
                 </tr>
             `;
             
@@ -1116,15 +1233,15 @@
                 
                 if (bet.status === "处理中") {
                     statusClass = "text-warning";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
+                    statusBadge = `<span class="flex items-center"><<i class="fa fa-spinner fa-spin mr-1"></</i> 处理中</span>`;
                 }
                 if (bet.status === "已完成") {
                     statusClass = "text-success";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
+                    statusBadge = `<span class="flex items-center"><<i class="fa fa-check-circle mr-1"></</i> 已完成</span>`;
                 }
                 if (bet.status === "失败") {
                     statusClass = "text-danger";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
+                    statusBadge = `<span class="flex items-center"><<i class="fa fa-times-circle mr-1"></</i> 失败</span>`;
                 }
                 
                 const betTimeHtml = `<span class="cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${bet.id}')">${bet.betTime.toLocaleString()}</span>`;
@@ -1162,6 +1279,17 @@
             document.getElementById("refreshMinutesInput").value = hms.minutes;
             document.getElementById("refreshSecondsInput").value = hms.seconds;
             updateRefreshIntervalDisplay();
+            
+            // 初始化倒计时显示元素（新增）
+            const intervalContainer = document.querySelector('.flex.items-center.gap-2 span.text-sm.text-gray-600').parentNode;
+            if (intervalContainer) {
+                // 在原有间隔显示后添加倒计时元素
+                const countdownEl = document.createElement('div');
+                countdownEl.id = "refreshCountdown";
+                countdownEl.className = "ml-4 text-sm";
+                countdownEl.innerHTML = '<span class="text-gray-500">服务未启动</span>';
+                intervalContainer.appendChild(countdownEl);
+            }
             
             // 绑定事件
             document.getElementById("betStrategySelect").addEventListener("change", function() {
@@ -1217,7 +1345,7 @@
         <!-- 服务控制区域 -->
         <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
             <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-cogs text-primary mr-2"></i>服务控制
+                <<i class="fa fa-cogs text-primary mr-2"></</i>服务控制
                 <span class="ml-3 text-sm font-normal text-gray-500">
                     <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
                     <span id="serviceStatusText">服务未运行</span>
@@ -1225,16 +1353,16 @@
             </h2>
             <div class="flex flex-wrap gap-3">
                 <button id="startServiceBtn" class="bg-primary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-primary/90 transition-colors">
-                    <i class="fa fa-play mr-2"></i>验证并启动服务
+                    <<i class="fa fa-play mr-2"></</i>验证并启动服务
                 </button>
                 <button id="stopServiceBtn" class="bg-danger text-white px-5 py-2.5 rounded-lg flex items-center opacity-50 cursor-not-allowed" disabled>
-                    <i class="fa fa-stop mr-2"></i>停止服务
+                    <<i class="fa fa-stop mr-2"></</i>停止服务
                 </button>
                 <button id="viewLogBtn" class="bg-secondary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-secondary/90 transition-colors">
-                    <i class="fa fa-list-alt mr-2"></i>查看刷新日志
+                    <<i class="fa fa-list-alt mr-2"></</i>查看刷新日志
                 </button>
                 <button id="clearLogBtn" class="bg-warning text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-warning/90 transition-colors">
-                    <i class="fa fa-trash mr-2"></i>清理日志
+                    <<i class="fa fa-trash mr-2"></</i>清理日志
                 </button>
             </div>
         </div>
@@ -1242,7 +1370,7 @@
         <!-- API配置区域 -->
         <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-success">
             <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-key text-success mr-2"></i>API 配置
+                <<i class="fa fa-key text-success mr-2"></</i>API 配置
             </h2>
             <div class="flex flex-wrap gap-3 items-center">
                 <input type="text" id="apiKeyInput" placeholder="输入API Key" class="flex-1 min-w-[300px] p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success focus:border-success outline-none transition-shadow">
@@ -1255,7 +1383,7 @@
         <!-- 参数设置区域 -->
         <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-warning">
             <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-sliders text-warning mr-2"></i>参数设置
+                <<i class="fa fa-sliders text-warning mr-2"></</i>参数设置
             </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
                 <div>
@@ -1327,7 +1455,7 @@
         <!-- 可投注项目区域 -->
         <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
             <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-list text-primary mr-2"></i>可投注项目
+                <<i class="fa fa-list text-primary mr-2"></</i>可投注项目
             </h2>
             <div class="flex flex-wrap gap-3 mb-5 items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -1336,6 +1464,7 @@
                     <button id="setIntervalBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
                         下次刷新时间
                     </button>
+                    <!-- 倒计时将通过JS动态插入到这里 -->
                 </div>
                 <div class="flex gap-2">
                     <button id="autoRefreshBtn" class="bg-primary text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-primary/90 transition-colors">
@@ -1351,78 +1480,5 @@
                     <tr>
                         <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
-                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
-                                <span>请启动服务或手动刷新</span>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-        </div>
-        
-        <!-- 待投注项目区域 -->
-        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-purple-500">
-            <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-calendar text-purple-500 mr-2"></i>待投注项目
-            </h2>
-            <div class="overflow-x-auto">
-                <table id="pendingBetsTable" class="min-w-full border-collapse">
-                    <tr>
-                        <td colspan="7" class="border p-8 text-center text-gray-500">
-                            <div class="flex flex-col items-center">
-                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
-                                <span>暂无待投注项目</span>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
-            </div>
-        </div>
-        
-        <!-- 日志区域 -->
-        <div class="bg-white rounded-lg shadow card-shadow p-5 hover-lift border-l-4 border-gray-500">
-            <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-history text-gray-500 mr-2"></i>操作日志
-            </h2>
-            <div id="logPanel" class="h-64 overflow-y-auto p-3 bg-gray-50 rounded-lg text-sm border border-gray-200">
-                系统启动中...
-            </div>
-        </div>
-    </div>
-
-    <!-- 日志弹窗 -->
-    <div id="logModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col m-4">
-            <div class="p-4 border-b flex justify-between items-center">
-                <h3 class="text-xl font-semibold text-primary">详细操作日志</h3>
-                <div class="flex gap-2">
-                    <button id="clearLogModalBtn" class="bg-warning text-white px-3 py-1.5 rounded-lg text-sm hover:bg-warning/90 transition-colors">
-                        <i class="fa fa-trash mr-1"></i>清理日志
-                    </button>
-                    <button id="closeLogModal" class="text-gray-500 hover:text-gray-700 p-1.5">
-                        <i class="fa fa-times text-xl"></i>
-                    </button>
-                </div>
-            </div>
-            <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 bg-gray-50 text-sm">
-                <!-- 日志内容将通过JS渲染 -->
-            </div>
-            <div class="p-4 border-t text-right">
-                <button class="bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-700 transition-colors" onclick="toggleLogModal()">
-                    关闭
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // 服务状态文本更新
-        setInterval(() => {
-            const statusText = document.getElementById("serviceStatusText");
-            if (statusText) {
-                statusText.textContent = isServiceRunning ? "服务运行中" : "服务已停止";
-            }
-        }, 1000);
-    </script>
-</body>
-</html>
+                                <<i class="fa fa-inbox text-3xl mb-2 text-gray-300"></</i>
+                                

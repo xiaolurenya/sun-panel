@@ -848,23 +848,54 @@
             }
         }
 
+        // 转换小时、分、秒为总秒数
+        function convertToSeconds(hours, minutes, seconds) {
+            return (hours * 3600) + (minutes * 60) + seconds;
+        }
+
+        // 转换总秒数为小时、分、秒
+        function convertToHMS(totalSeconds) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return { hours, minutes, seconds };
+        }
+
         function setRefreshInterval() {
-            const intervalInput = document.getElementById("refreshIntervalInput");
-            const interval = parseInt(intervalInput.value);
-            if (!isNaN(interval) && interval > 0 && interval <= 300) {
-                CONFIG.state.refreshInterval = interval;
-                Logger.info(`已设置数据刷新间隔为 ${interval} 秒`);
+            // 从小时、分、秒输入框获取值
+            const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
+            const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
+            const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
+            
+            // 计算总秒数
+            const totalSeconds = convertToSeconds(hours, minutes, seconds);
+            
+            // 验证范围 (5秒 - 86400秒，即24小时)
+            if (totalSeconds >= 5 && totalSeconds <= 86400) {
+                CONFIG.state.refreshInterval = totalSeconds;
+                Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒 (${totalSeconds}秒)`);
                 
-                document.getElementById("refreshIntervalDisplay").value = interval;
+                // 更新显示
+                updateRefreshIntervalDisplay();
                 
                 if (isServiceRunning && CONFIG.state.autoRefresh) {
                     startAutoRefresh();
                 }
             } else {
-                Logger.warning("无效的刷新间隔值（必须为1-300之间的整数）");
-                intervalInput.value = CONFIG.state.refreshInterval;
-                document.getElementById("refreshIntervalDisplay").value = CONFIG.state.refreshInterval;
+                Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
+                // 恢复原来的值
+                const hms = convertToHMS(CONFIG.state.refreshInterval);
+                document.getElementById("refreshHoursInput").value = hms.hours;
+                document.getElementById("refreshMinutesInput").value = hms.minutes;
+                document.getElementById("refreshSecondsInput").value = hms.seconds;
             }
+        }
+
+        // 更新刷新间隔显示
+        function updateRefreshIntervalDisplay() {
+            const hms = convertToHMS(CONFIG.state.refreshInterval);
+            document.getElementById("refreshIntervalDisplay").textContent = 
+                `${hms.hours}小时${hms.minutes}分${hms.seconds}秒 (${CONFIG.state.refreshInterval}秒)`;
         }
 
         // 手动修改待投注项目时间的功能
@@ -911,14 +942,14 @@
                 CONFIG.state.oddsThreshold = Math.max(1.0, parseFloat(document.getElementById("oddsThresholdInput").value) || 1.5);
                 CONFIG.state.pendingFilter = document.getElementById("pendingFilterSelect").value || "all";
                 
-                const interval = parseInt(document.getElementById("refreshIntervalInput").value);
-                if (!isNaN(interval) && interval > 0 && interval <= 300) {
-                    CONFIG.state.refreshInterval = interval;
-                } else {
-                    CONFIG.state.refreshInterval = 30;
+                // 同步刷新间隔（从小时、分、秒计算）
+                const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
+                const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
+                const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
+                const totalSeconds = convertToSeconds(hours, minutes, seconds);
+                if (totalSeconds >= 5 && totalSeconds <= 86400) {
+                    CONFIG.state.refreshInterval = totalSeconds;
                 }
-                document.getElementById("refreshIntervalDisplay").value = CONFIG.state.refreshInterval;
-                document.getElementById("refreshIntervalInput").value = CONFIG.state.refreshInterval;
                 
                 // 同步输入框显示的值
                 document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
@@ -928,8 +959,12 @@
                 document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
                 document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
                 
+                // 更新刷新间隔显示
+                updateRefreshIntervalDisplay();
+                
                 Logger.toggleDetailedMode(CONFIG.state.detailedLogMode);
-                Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s, 刷新间隔: ${CONFIG.state.refreshInterval}s, 检查间隔: ${CONFIG.state.checkInterval}s`);
+                const hms = convertToHMS(CONFIG.state.refreshInterval);
+                Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
                 // 保存后立即刷新配置，重新计算所有时间
                 if (isServiceRunning) {
@@ -1117,11 +1152,16 @@
             document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
             document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
             document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
-            document.getElementById("refreshIntervalInput").value = CONFIG.state.refreshInterval;
-            document.getElementById("refreshIntervalDisplay").value = CONFIG.state.refreshInterval;
             document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
             document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
             document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
+            
+            // 初始化刷新间隔的小时、分、秒输入框
+            const hms = convertToHMS(CONFIG.state.refreshInterval);
+            document.getElementById("refreshHoursInput").value = hms.hours;
+            document.getElementById("refreshMinutesInput").value = hms.minutes;
+            document.getElementById("refreshSecondsInput").value = hms.seconds;
+            updateRefreshIntervalDisplay();
             
             // 绑定事件
             document.getElementById("betStrategySelect").addEventListener("change", function() {
@@ -1252,8 +1292,12 @@
                     <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">数据刷新间隔(秒) <span class="text-danger text-xs">*</span></label>
-                    <input type="number" id="refreshIntervalInput" min="5" max="300" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">数据刷新间隔 <span class="text-danger text-xs">*</span></label>
+                    <div class="flex gap-2">
+                        <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    </div>
                 </div>
                 <div>
                     <label class="block text-sm text-gray-600 mb-1.5">赔率阈值（高赔率策略）</label>
@@ -1287,8 +1331,8 @@
             </h2>
             <div class="flex flex-wrap gap-3 mb-5 items-center justify-between">
                 <div class="flex items-center gap-2">
-                    <span class="text-sm text-gray-600">数据刷新间隔(秒):</span>
-                    <input type="number" id="refreshIntervalDisplay" min="5" max="300" class="w-20 p-2.5 border border-gray-300 rounded-lg bg-gray-50" disabled>
+                    <span class="text-sm text-gray-600">当前数据刷新间隔:</span>
+                    <span id="refreshIntervalDisplay" class="p-2.5 bg-gray-50 rounded-lg text-sm border border-gray-300 min-w-[180px]"></span>
                     <button id="setIntervalBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
                         设置间隔
                     </button>

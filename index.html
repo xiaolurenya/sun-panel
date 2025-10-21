@@ -51,7 +51,6 @@
     <script>
         // 安全机制 - 防调试和防复制
         (function() {
-            // 防调试检测
             const antiDebug = () => {
                 if (window.outerHeight - window.innerHeight > 200 || window.outerWidth - window.innerWidth > 200) {
                     document.body.innerHTML = '<div class="flex items-center justify-center h-screen bg-danger text-white text-xl">检测到非法调试行为，系统已保护</div>';
@@ -61,13 +60,8 @@
             };
             antiDebug();
 
-            // 防右键复制
             document.addEventListener('contextmenu', e => e.preventDefault());
-            
-            // 防选中复制
             document.addEventListener('selectstart', e => e.preventDefault());
-            
-            // 防F12调试
             document.addEventListener('keydown', e => {
                 if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {
                     e.preventDefault();
@@ -76,7 +70,6 @@
             });
         })();
 
-        // 备用Axios加载
         if (typeof axios === 'undefined') {
             document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
         }
@@ -88,8 +81,9 @@
         let isServiceRunning = false;
         let logModalVisible = false;
         let lastActivityTime = 0;
-        let isPageVisible = true; // 跟踪页面可见性状态
-        let countdownTimer = null; // 刷新间隔倒计时定时器
+        let isPageVisible = true;
+        let countdownTimer = null;
+        let countdownEndTime = 0; // 倒计时结束时间戳（核心改进）
         
         const GlobalInfo = {
             bet_mask: {},
@@ -156,22 +150,22 @@
             state: {
                 availableBets: [],
                 autoRefresh: true,
-                refreshInterval: 30,       // 数据刷新间隔（秒）
+                refreshInterval: 30,
                 targetUserId: "205809",
-                advanceSeconds: 3,         // 统一提前下注秒数
-                toleranceSeconds: 10,      // 统一容忍秒数
+                advanceSeconds: 3,
+                toleranceSeconds: 10,
                 amountRange: 20000,
                 baseAmount: 10000,
-                betStrategy: "higher_odds", // 高赔率策略
-                checkInterval: 2,          // 投注检查间隔（秒）
+                betStrategy: "higher_odds",
+                checkInterval: 2,
                 detailedLogMode: false,
-                oddsThreshold: 1.5,         // 赔率阈值
+                oddsThreshold: 1.5,
                 pendingFilter: "all",
-                slippageTolerance: 0.05     // 滑点容忍度（5%）
+                slippageTolerance: 0.05
             }
         };
 
-        // 核心请求函数 - 增加错误重试机制
+        // 核心请求函数
         async function request(url, method = 'post', data = {}, retry = 1) {
             try {
                 const response = await axios({
@@ -188,7 +182,6 @@
                 return response.data;
             } catch (e) {
                 Logger.error(`请求失败: ${e.message} (${url})`, true);
-                // 重试机制：仅在首次失败时重试一次
                 if (retry > 0) {
                     Logger.warning(`尝试重试请求: ${url}`, true);
                     return request(url, method, data, retry - 1);
@@ -247,7 +240,6 @@
                     Logger.info(`[ ${idx + 1} / ${CONFIG.state.availableBets.length} ] 项目id: ${betitem.id} 结束时间： ${betitem.endtime}`);
                     Logger.info(`${betitem.heading}, ${betitem.undertext || ''}`);
                     
-                    // 记录各队伍赔率
                     if (betitem.optionsList && betitem.optionsList.length > 0) {
                         Logger.info(`可下注选项(共${betitem.optionsList.length}个)：`, true);
                         betitem.optionsList.forEach((opt, optIdx) => {
@@ -259,7 +251,7 @@
                 await flushConfig();
                 processPendingBets(true);
                 renderBetTable();
-                resetRefreshCountdown(); // 刷新后重置倒计时
+                resetRefreshCountdown();
                 return true;
             } catch (e) {
                 Logger.warning("主服务器获取失败，尝试备用服务器...");
@@ -273,17 +265,17 @@
                     await flushConfig();
                     processPendingBets(true);
                     renderBetTable();
-                    resetRefreshCountdown(); // 刷新后重置倒计时
+                    resetRefreshCountdown();
                     return true;
                 } catch (e2) {
                     Logger.error(`获取投注项目失败: ${e2.message}`);
-                    resetRefreshCountdown(); // 失败后仍重置倒计时
+                    resetRefreshCountdown();
                     return false;
                 }
             }
         }
 
-        // 刷新配置 - 确保所有项目使用统一的提前下注和容忍秒数
+        // 刷新配置
         async function flushConfig() {
             const availableBets = GlobalInfo.available_bets;
             const newConfigs = {};
@@ -294,7 +286,6 @@
                 const id = bet.id;
                 GlobalInfo.bet_mask[id] = [];
                 
-                // 统一计算公式：结束时间 - 提前下注秒数
                 const endTime = new Date(bet.endtime);
                 const scheduledTime = new Date(endTime.getTime() - CONFIG.state.advanceSeconds * 1000);
                 const scheduledTimeMulti = new Date(endTime.getTime() - CONFIG.state.advanceSeconds * 1000);
@@ -315,13 +306,12 @@
             Logger.info(`配置已刷新，应用统一提前下注(${CONFIG.state.advanceSeconds}s)和容忍时间(${CONFIG.state.toleranceSeconds}s)`, true);
         }
 
-        // 处理待投注项目 - 确保时间计算一致
+        // 处理待投注项目
         function processPendingBets(refresh = false) {
             const now = new Date();
             const processingItems = refresh ? pendingBets.filter(bet => bet.status === "处理中") : [];
             let newPendingBets = [...processingItems];
             
-            // 收集所有符合条件的候选项目
             const candidateBets = [];
             Object.values(GlobalInfo.configs).forEach(cfg => {
                 if (processingItems.some(bet => bet.id === cfg.bet_id)) {
@@ -332,12 +322,10 @@
                     const betItem = CONFIG.state.availableBets.find(item => item.id === cfg.bet_id);
                     if (!betItem) return;
                     
-                    // 根据当前选中的投注策略确定投注时间
                     const betTime = CONFIG.state.betStrategy === "follow" 
                         ? cfg.scheduled_time_multi 
                         : cfg.scheduled_time;
                     
-                    // 应用统一的容忍秒数判断
                     const toleranceTime = new Date(new Date(cfg.endtime).getTime() + CONFIG.state.toleranceSeconds * 1000);
                     if (betTime > now && betTime < toleranceTime) {
                         if (shouldPlaceBet(betItem)) {
@@ -356,7 +344,6 @@
                                 highestOdds: highestOddsOption ? parseFloat(highestOddsOption.odds) : 0,
                                 highestOddsTeam: highestOddsOption ? highestOddsOption.text : 'N/A',
                                 ratioValue: ratioValue,
-                                // 记录当前最高赔率用于后续检查
                                 recordedOdds: highestOddsOption ? parseFloat(highestOddsOption.odds) : 0
                             });
                         }
@@ -366,10 +353,7 @@
                 }
             });
             
-            // 根据筛选方式处理候选项目
             let selectedBets = [];
-            
-            // 按时间分组
             const betsByTimeGroup = {};
             candidateBets.forEach(bet => {
                 const timeGroup = new Date(bet.betTime).toLocaleString('zh-CN', { 
@@ -386,7 +370,6 @@
                 betsByTimeGroup[timeGroup].push(bet);
             });
             
-            // 应用不同的筛选策略
             switch (CONFIG.state.pendingFilter) {
                 case "all":
                     Object.values(betsByTimeGroup).forEach(group => {
@@ -423,7 +406,6 @@
                     break;
             }
             
-            // 排序并更新待投注列表
             newPendingBets = [...newPendingBets, ...selectedBets];
             newPendingBets.sort((a, b) => a.betTime - b.betTime);
             pendingBets = newPendingBets;
@@ -569,7 +551,7 @@
             return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
         }
 
-        // 执行投注操作（含滑点保护和赔率检查）
+        // 执行投注操作
         async function placeBet(betItem) {
             updateLastActivity();
             try {
@@ -579,9 +561,7 @@
                 let myBonuses = [];
                 let currentOdds = 0;
 
-                // 高赔率策略：检查赔率是否下降
                 if (CONFIG.state.betStrategy === "higher_odds") {
-                    // 重新获取最新赔率
                     const freshBetItem = CONFIG.state.availableBets.find(item => item.id === betItem.id);
                     if (!freshBetItem) {
                         Logger.error(`项目 #${betItem.id} 已失效，取消投注`);
@@ -595,7 +575,6 @@
                     }
                     
                     currentOdds = parseFloat(currentHighestOption.odds);
-                    // 检查赔率是否下降超过容忍度
                     const oddsDrop = betItem.recordedOdds - currentOdds;
                     if (oddsDrop > CONFIG.state.slippageTolerance) {
                         Logger.warning(`项目 #${betItem.id} 赔率下降超过容忍度(${CONFIG.state.slippageTolerance})，原赔率: ${betItem.recordedOdds}, 当前: ${currentOdds}，取消投注`);
@@ -606,14 +585,12 @@
                     myBonuses = [calculateBetAmount()];
                     Logger.info(`高赔率策略投注: 选项 ${currentHighestOption.text} (赔率: ${currentHighestOption.odds}), 金额 ${myBonuses[0]}`, true);
                 }
-                // 跟随策略
                 else if (CONFIG.state.betStrategy === "follow") {
                     while (true) {
                         const targetBet = await getTargetUserBet(betItem.id);
                         const endTime = new Date(betItem.endtime);
                         const now = new Date();
                         
-                        // 使用统一的容忍秒数判断
                         if (now >= new Date(endTime.getTime() + CONFIG.state.toleranceSeconds * 1000)) {
                             Logger.error(`超过容忍时间(${CONFIG.state.toleranceSeconds}s)，未发现目标用户投注，项目 #${betItem.id} 下注失败`);
                             return false;
@@ -635,7 +612,6 @@
                         break;
                     }
                 } 
-                // 押大策略
                 else if (CONFIG.state.betStrategy === "larger") {
                     choices = await getLargerOptions(betItem.id);
                     if (choices.length === 0) {
@@ -647,7 +623,6 @@
                         myBonuses.push(calculateBetAmount());
                     });
                 } 
-                // 押小策略
                 else if (CONFIG.state.betStrategy === "smaller") {
                     choices = await getSmallerOptions(betItem.id);
                     if (choices.length === 0) {
@@ -660,7 +635,6 @@
                     });
                 }
                 
-                // 执行投注（滑点保护）
                 for (let i = 0; i < choices.length; i++) {
                     const optId = choices[i];
                     const bonus = myBonuses[i];
@@ -676,7 +650,6 @@
                     
                     const result = await request(url);
                     
-                    // 滑点保护：检查API返回状态（根据实际接口调整）
                     if (result.code !== 0) {
                         Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败（滑点）: ${result.msg || '未知错误'}`);
                         return false;
@@ -713,7 +686,6 @@
                         
                         const result = await request(url);
                         
-                        // 滑点保护：检查API返回状态
                         if (result.code !== 0) {
                             Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败（滑点）: ${result.msg || '未知错误'}`);
                             return false;
@@ -742,7 +714,6 @@
 
         // 检查并执行待下注项目
         function checkAndPlaceBets() {
-            // 即使页面在后台，也确保执行检查
             if (!isServiceRunning) return;
             
             updateLastActivity();
@@ -754,7 +725,6 @@
                     bet.status = "处理中";
                     renderPendingBetsTable();
                     
-                    // 使用异步执行避免阻塞
                     (async () => {
                         const success = await placeBet(bet);
                         bet.status = success ? "已完成" : "失败";
@@ -763,7 +733,6 @@
                 }
             });
             
-            // 无论页面是否可见，都继续定时检查
             if (isServiceRunning) {
                 betCheckTimer = setTimeout(checkAndPlaceBets, CONFIG.state.checkInterval * 1000);
             }
@@ -801,9 +770,10 @@
             await loadBetItems();
             startAutoRefresh();
             startBetChecker();
-            startRefreshCountdown(); // 启动刷新倒计时
             
-            // 强制页面可见性状态为true
+            // 初始化倒计时结束时间
+            resetRefreshCountdown();
+            
             isPageVisible = true;
             document.addEventListener('visibilitychange', handleVisibilityChange);
             
@@ -820,7 +790,7 @@
             
             stopAutoRefresh();
             stopBetChecker();
-            stopRefreshCountdown(); // 停止刷新倒计时
+            stopRefreshCountdown();
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             
             isServiceRunning = false;
@@ -828,27 +798,24 @@
             Logger.info("服务已停止");
         }
 
-        // 自动刷新控制 - 后台兼容优化
+        // 自动刷新控制
         function startAutoRefresh() {
             stopAutoRefresh();
             
             const refresh = () => {
                 if (CONFIG.state.autoRefresh && isServiceRunning) {
-                    // 即使在后台也执行刷新，但添加频率限制
                     const now = new Date().getTime();
                     const timeSinceLast = now - lastActivityTime;
                     
-                    // 后台时最长3分钟刷新一次，避免过度消耗资源
                     if (isPageVisible || timeSinceLast > 3 * 60 * 1000) {
                         Logger.info(`执行数据刷新（间隔: ${CONFIG.state.refreshInterval}秒）`, true);
                         loadBetItems();
                     } else {
                         Logger.info(`页面在后台，延迟数据刷新`, true);
-                        resetRefreshCountdown(); // 延迟刷新时重置倒计时
+                        resetRefreshCountdown();
                     }
                 }
                 
-                // 无论页面状态如何，都安排下一次刷新
                 if (isServiceRunning) {
                     const nextExecution = Date.now() + CONFIG.state.refreshInterval * 1000;
                     autoRefreshTimer = setTimeout(refresh, nextExecution - Date.now());
@@ -866,10 +833,10 @@
             }
         }
 
-        // 投注检查器 - 确保后台也能运行
+        // 投注检查器
         function startBetChecker() {
             stopBetChecker();
-            checkAndPlaceBets(); // 立即执行一次
+            checkAndPlaceBets();
         }
 
         function stopBetChecker() {
@@ -879,34 +846,49 @@
             }
         }
 
-        // 处理页面可见性变化 - 增强后台兼容性
+        // 处理页面可见性变化 - 核心修复
         function handleVisibilityChange() {
+            const wasVisible = isPageVisible;
             isPageVisible = document.visibilityState === 'visible';
             
-            if (isPageVisible && isServiceRunning) {
-                Logger.info("页面恢复可见，同步时间并重启定时器...", true);
-                const now = new Date().getTime();
-                const timeDiff = now - lastActivityTime;
+            if (isPageVisible && !wasVisible && isServiceRunning) {
+                Logger.info("页面恢复可见，同步倒计时状态...", true);
                 
-                // 如果页面在后台超过1分钟，强制刷新数据
+                // 重新计算倒计时结束时间
+                const now = Date.now();
+                const elapsed = now - lastActivityTime;
+                
+                // 如果之前有有效的倒计时结束时间
+                if (countdownEndTime > 0) {
+                    // 调整结束时间 = 原结束时间 - 页面在后台的时间
+                    countdownEndTime = Math.max(now, countdownEndTime - elapsed);
+                } else {
+                    // 没有有效结束时间则重新初始化
+                    countdownEndTime = now + CONFIG.state.refreshInterval * 1000;
+                }
+                
+                // 重启倒计时显示
+                startRefreshCountdown();
+                
+                // 其他同步操作
+                const timeDiff = now - lastActivityTime;
                 if (timeDiff > 60000) {
                     Logger.info(`页面在后台停留了 ${Math.floor(timeDiff/1000)} 秒，强制刷新数据`, true);
                     loadBetItems();
                 }
                 
-                // 重启定时器确保时间准确
                 startAutoRefresh();
                 if (!betCheckTimer) {
                     startBetChecker();
                 }
-                startRefreshCountdown(); // 恢复可见时启动倒计时
-            } else if (!isPageVisible && isServiceRunning) {
-                Logger.info("页面进入后台，调整刷新策略...", true);
-                stopRefreshCountdown(); // 后台时停止倒计时显示
+            } else if (!isPageVisible && wasVisible && isServiceRunning) {
+                Logger.info("页面进入后台，暂停倒计时显示...", true);
+                // 只停止显示，不改变结束时间
+                stopRefreshCountdown();
             }
         }
 
-        // 刷新间隔倒计时控制 - 仅显示倒计时并自动循环
+        // 刷新间隔倒计时控制 - 核心改进
         function formatCountdown(seconds) {
             const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
             const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
@@ -917,20 +899,23 @@
         function startRefreshCountdown() {
             stopRefreshCountdown();
             
-            // 初始倒计时值
-            let remaining = CONFIG.state.refreshInterval;
-            
-            const updateDisplay = () => {
-                // 更新显示
-                document.getElementById("refreshIntervalDisplay").textContent = formatCountdown(remaining);
+            // 计算当前剩余秒数
+            const calculateRemaining = () => {
+                const now = Date.now();
+                const remaining = Math.max(0, Math.ceil((countdownEndTime - now) / 1000));
                 
-                // 倒计时递减
-                remaining--;
-                
-                // 当倒计时结束时，重新开始
-                if (remaining < 0) {
-                    remaining = CONFIG.state.refreshInterval;
+                // 如果倒计时已结束，重置为新的周期
+                if (remaining === 0) {
+                    countdownEndTime = now + CONFIG.state.refreshInterval * 1000;
+                    return CONFIG.state.refreshInterval;
                 }
+                return remaining;
+            };
+            
+            // 更新显示
+            const updateDisplay = () => {
+                const remaining = calculateRemaining();
+                document.getElementById("refreshIntervalDisplay").textContent = formatCountdown(remaining);
             };
             
             // 立即更新一次
@@ -947,6 +932,8 @@
         }
 
         function resetRefreshCountdown() {
+            // 重置倒计时结束时间为当前时间 + 刷新间隔
+            countdownEndTime = Date.now() + CONFIG.state.refreshInterval * 1000;
             if (isServiceRunning && CONFIG.state.autoRefresh) {
                 startRefreshCountdown();
             }
@@ -961,11 +948,10 @@
             if (isServiceRunning) {
                 if (CONFIG.state.autoRefresh) {
                     startAutoRefresh();
-                    startRefreshCountdown(); // 开启自动刷新时启动倒计时
+                    resetRefreshCountdown(); // 开启时重置倒计时
                 } else {
                     stopAutoRefresh();
-                    stopRefreshCountdown(); // 关闭自动刷新时停止倒计时
-                    // 显示当前设置的间隔值
+                    stopRefreshCountdown();
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
                     document.getElementById("refreshIntervalDisplay").textContent = 
                         `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
@@ -987,31 +973,28 @@
         }
 
         function setRefreshInterval() {
-            // 从小时、分、秒输入框获取值
             const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
             const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
             const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
             
-            // 计算总秒数
             const totalSeconds = convertToSeconds(hours, minutes, seconds);
             
-            // 验证范围 (5秒 - 86400秒，即24小时)
             if (totalSeconds >= 5 && totalSeconds <= 86400) {
                 CONFIG.state.refreshInterval = totalSeconds;
                 Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒 (${totalSeconds}秒)`);
                 
+                // 重置倒计时结束时间
+                resetRefreshCountdown();
+                
                 if (isServiceRunning && CONFIG.state.autoRefresh) {
                     startAutoRefresh();
-                    startRefreshCountdown(); // 更新间隔后重启倒计时
                 } else {
-                    // 显示当前设置的间隔值
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
                     document.getElementById("refreshIntervalDisplay").textContent = 
                         `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
                 }
             } else {
                 Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
-                // 恢复原来的值
                 const hms = convertToHMS(CONFIG.state.refreshInterval);
                 document.getElementById("refreshHoursInput").value = hms.hours;
                 document.getElementById("refreshMinutesInput").value = hms.minutes;
@@ -1048,10 +1031,9 @@
             loadBetItems();
         }
 
-        // 保存参数 - 确保提前下注和容忍秒数立即生效
+        // 保存参数
         function saveParameters() {
             try {
-                // 保存所有参数并增加类型校验
                 CONFIG.state.targetUserId = document.getElementById("targetUserIdInput").value || "205809";
                 CONFIG.state.advanceSeconds = Math.max(0, parseInt(document.getElementById("advanceSecondsInput").value) || 3);
                 CONFIG.state.toleranceSeconds = Math.max(0, parseInt(document.getElementById("toleranceSecondsInput").value) || 10);
@@ -1064,7 +1046,6 @@
                 CONFIG.state.pendingFilter = document.getElementById("pendingFilterSelect").value || "all";
                 CONFIG.state.slippageTolerance = Math.max(0.01, parseFloat(document.getElementById("slippageToleranceInput").value) || 0.05);
                 
-                // 同步刷新间隔（从小时、分、秒计算）
                 const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
                 const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
                 const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
@@ -1073,7 +1054,6 @@
                     CONFIG.state.refreshInterval = totalSeconds;
                 }
                 
-                // 同步输入框显示的值
                 document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
                 document.getElementById("toleranceSecondsInput").value = CONFIG.state.toleranceSeconds;
                 document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
@@ -1086,20 +1066,17 @@
                 const hms = convertToHMS(CONFIG.state.refreshInterval);
                 Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
-                // 保存后立即刷新配置，重新计算所有时间
                 if (isServiceRunning) {
                     flushConfig().then(() => {
                         processPendingBets(true);
                         renderBetTable();
                         renderPendingBetsTable();
                         
-                        // 重启定时器应用新间隔
                         startAutoRefresh();
                         startBetChecker();
-                        startRefreshCountdown(); // 保存参数后重启倒计时
+                        resetRefreshCountdown(); // 保存参数后重置倒计时
                     });
                 } else {
-                    // 更新显示当前设置的间隔值
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
                     document.getElementById("refreshIntervalDisplay").textContent = 
                         `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
@@ -1120,7 +1097,6 @@
             startBtn.disabled = isServiceRunning;
             stopBtn.disabled = !isServiceRunning;
             
-            // 更新状态指示器
             if (statusIndicator) {
                 statusIndicator.className = isServiceRunning 
                     ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
@@ -1271,7 +1247,6 @@
 
         // 页面初始化
         document.addEventListener("DOMContentLoaded", () => {
-            // 初始化表单值
             document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
             document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
             document.getElementById("toleranceSecondsInput").value = CONFIG.state.toleranceSeconds;
@@ -1283,17 +1258,17 @@
             document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
             document.getElementById("slippageToleranceInput").value = CONFIG.state.slippageTolerance;
             
-            // 初始化刷新间隔的小时、分、秒输入框
             const hms = convertToHMS(CONFIG.state.refreshInterval);
             document.getElementById("refreshHoursInput").value = hms.hours;
             document.getElementById("refreshMinutesInput").value = hms.minutes;
             document.getElementById("refreshSecondsInput").value = hms.seconds;
             
-            // 初始化刷新间隔显示为时间格式
             document.getElementById("refreshIntervalDisplay").textContent = 
                 `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
             
-            // 绑定事件
+            // 初始化倒计时结束时间
+            countdownEndTime = Date.now() + CONFIG.state.refreshInterval * 1000;
+            
             document.getElementById("betStrategySelect").addEventListener("change", function() {
                 CONFIG.state.betStrategy = this.value;
                 Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
@@ -1325,14 +1300,12 @@
             document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
             document.getElementById("clearLogModalBtn").addEventListener("click", () => Logger.clear());
             
-            // 初始化表格
             renderBetTable();
             renderPendingBetsTable();
             updateServiceStatus();
             
             Logger.info("系统已启动，等待操作...");
             
-            // 初始化页面可见性状态
             isPageVisible = document.visibilityState === 'visible';
         });
     </script>
@@ -1550,7 +1523,6 @@
     </div>
 
     <script>
-        // 服务状态文本更新
         setInterval(() => {
             const statusText = document.getElementById("serviceStatusText");
             if (statusText) {

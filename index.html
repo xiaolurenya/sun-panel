@@ -956,9 +956,8 @@
             
             if (isServiceRunning) {
                 if (CONFIG.state.autoRefresh) {
-                    // 开启时保持当前周期
-                    startRefreshCountdown();
-                    scheduleNextRefresh();
+                    // 开启时从当前时间开始新周期
+                    resetRefreshCycle();
                 } else {
                     stopAutoRefresh();
                     stopRefreshCountdown();
@@ -994,9 +993,10 @@
                 CONFIG.state.refreshInterval = totalSeconds;
                 Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒 (${totalSeconds}秒)`);
                 
-                // 只有当间隔实际改变时才重置周期
+                // 只要间隔改变就从当前时间开始新周期
                 if (oldInterval !== totalSeconds && isServiceRunning) {
-                    adjustRefreshCycleForNewInterval();
+                    Logger.info("刷新间隔已更改，从当前时间开始新周期", true);
+                    resetRefreshCycle();
                 } else if (!isServiceRunning) {
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
                     document.getElementById("refreshIntervalDisplay").textContent = 
@@ -1008,24 +1008,6 @@
                 document.getElementById("refreshHoursInput").value = hms.hours;
                 document.getElementById("refreshMinutesInput").value = hms.minutes;
                 document.getElementById("refreshSecondsInput").value = hms.seconds;
-            }
-        }
-
-        // 调整刷新周期以适应新的间隔，但保持当前进度
-        function adjustRefreshCycleForNewInterval() {
-            const now = Date.now();
-            const oldIntervalMs = (CONFIG.state.refreshInterval * 1000);
-            const elapsedMs = now - refreshCycleStartTime;
-            
-            // 计算在新间隔中的等效进度
-            const progressRatio = Math.min(1, elapsedMs / oldIntervalMs);
-            
-            // 基于当前进度设置新的周期起始时间
-            refreshCycleStartTime = now - (progressRatio * CONFIG.state.refreshInterval * 1000);
-            
-            if (isServiceRunning && CONFIG.state.autoRefresh) {
-                startRefreshCountdown();
-                scheduleNextRefresh();
             }
         }
 
@@ -1104,10 +1086,10 @@
                         
                         startBetChecker();
                         
-                        // 只有当刷新间隔实际改变时才调整周期
+                        // 只有当刷新间隔实际改变时才重置周期
                         if (oldRefreshInterval !== CONFIG.state.refreshInterval) {
-                            Logger.info("刷新间隔已更改，调整倒计时周期以保持进度", true);
-                            adjustRefreshCycleForNewInterval();
+                            Logger.info("刷新间隔已更改，从当前时间开始新周期", true);
+                            resetRefreshCycle();
                         } else {
                             // 间隔未变，仅重启显示计时器以确保UI更新
                             if (CONFIG.state.autoRefresh) {

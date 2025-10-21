@@ -83,7 +83,7 @@
         let lastActivityTime = 0;
         let isPageVisible = true;
         let countdownTimer = null;
-        let countdownEndTime = 0; // 倒计时结束时间戳（核心改进）
+        let refreshCycleStartTime = 0; // 记录当前刷新周期的开始时间戳
         
         const GlobalInfo = {
             bet_mask: {},
@@ -251,7 +251,7 @@
                 await flushConfig();
                 processPendingBets(true);
                 renderBetTable();
-                resetRefreshCountdown();
+                resetRefreshCycle(); // 数据刷新后重置周期
                 return true;
             } catch (e) {
                 Logger.warning("主服务器获取失败，尝试备用服务器...");
@@ -265,11 +265,11 @@
                     await flushConfig();
                     processPendingBets(true);
                     renderBetTable();
-                    resetRefreshCountdown();
+                    resetRefreshCycle(); // 数据刷新后重置周期
                     return true;
                 } catch (e2) {
                     Logger.error(`获取投注项目失败: ${e2.message}`);
-                    resetRefreshCountdown();
+                    resetRefreshCycle(); // 失败后仍重置周期
                     return false;
                 }
             }
@@ -771,8 +771,8 @@
             startAutoRefresh();
             startBetChecker();
             
-            // 初始化倒计时结束时间
-            resetRefreshCountdown();
+            // 初始化刷新周期开始时间
+            resetRefreshCycle();
             
             isPageVisible = true;
             document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -812,18 +812,37 @@
                         loadBetItems();
                     } else {
                         Logger.info(`页面在后台，延迟数据刷新`, true);
-                        resetRefreshCountdown();
+                        // 重新计算下一次刷新时间，确保周期准确
+                        scheduleNextRefresh();
                     }
                 }
                 
-                if (isServiceRunning) {
-                    const nextExecution = Date.now() + CONFIG.state.refreshInterval * 1000;
-                    autoRefreshTimer = setTimeout(refresh, nextExecution - Date.now());
-                    Logger.info(`下一次数据刷新时间: ${new Date(nextExecution).toLocaleTimeString()}`, true);
+                if (isServiceRunning && CONFIG.state.autoRefresh) {
+                    scheduleNextRefresh();
                 }
             };
             
             refresh();
+        }
+
+        // 精确计算并安排下一次刷新
+        function scheduleNextRefresh() {
+            const now = Date.now();
+            const intervalMs = CONFIG.state.refreshInterval * 1000;
+            
+            // 计算下一次刷新应该在当前周期的哪个时间点
+            const nextRefreshTime = refreshCycleStartTime + intervalMs;
+            
+            // 如果计算的时间已过去，则立即执行
+            const delay = Math.max(0, nextRefreshTime - now);
+            
+            autoRefreshTimer = setTimeout(() => {
+                if (isServiceRunning && CONFIG.state.autoRefresh) {
+                    loadBetItems();
+                }
+            }, delay);
+            
+            Logger.info(`下一次数据刷新时间: ${new Date(nextRefreshTime).toLocaleTimeString()}`, true);
         }
 
         function stopAutoRefresh() {
@@ -854,37 +873,41 @@
             if (isPageVisible && !wasVisible && isServiceRunning) {
                 Logger.info("页面恢复可见，同步倒计时状态...", true);
                 
-                // 重新计算倒计时结束时间
+                // 计算页面在后台停留的时间
                 const now = Date.now();
-                const elapsed = now - lastActivityTime;
+                const timeDiff = now - lastActivityTime;
                 
-                // 如果之前有有效的倒计时结束时间
-                if (countdownEndTime > 0) {
-                    // 调整结束时间 = 原结束时间 - 页面在后台的时间
-                    countdownEndTime = Math.max(now, countdownEndTime - elapsed);
-                } else {
-                    // 没有有效结束时间则重新初始化
-                    countdownEndTime = now + CONFIG.state.refreshInterval * 1000;
-                }
+                // 调整刷新周期开始时间，确保倒计时连续
+                refreshCycleStartTime = Math.max(refreshCycleStartTime, now - (CONFIG.state.refreshInterval * 1000));
                 
                 // 重启倒计时显示
                 startRefreshCountdown();
                 
-                // 其他同步操作
-                const timeDiff = now - lastActivityTime;
+                // 如果页面在后台超过1分钟，强制刷新数据
                 if (timeDiff > 60000) {
                     Logger.info(`页面在后台停留了 ${Math.floor(timeDiff/1000)} 秒，强制刷新数据`, true);
                     loadBetItems();
+                } else {
+                    // 重新安排下一次刷新，确保时间准确
+                    scheduleNextRefresh();
                 }
                 
-                startAutoRefresh();
                 if (!betCheckTimer) {
                     startBetChecker();
                 }
             } else if (!isPageVisible && wasVisible && isServiceRunning) {
                 Logger.info("页面进入后台，暂停倒计时显示...", true);
-                // 只停止显示，不改变结束时间
+                // 只停止显示，不改变周期计时
                 stopRefreshCountdown();
+            }
+        }
+
+        // 重置刷新周期开始时间
+        function resetRefreshCycle() {
+            refreshCycleStartTime = Date.now();
+            if (isServiceRunning && CONFIG.state.autoRefresh) {
+                startRefreshCountdown();
+                scheduleNextRefresh();
             }
         }
 
@@ -900,42 +923,33 @@
             stopRefreshCountdown();
             
             // 计算当前剩余秒数
-            const calculateRemaining = () => {
-                const now = Date.now();
-                const remaining = Math.max(0, Math.ceil((countdownEndTime - now) / 1000));
-                
-                // 如果倒计时已结束，重置为新的周期
-                if (remaining === 0) {
-                    countdownEndTime = now + CONFIG.state.refreshInterval * 1000;
-                    return CONFIG.state.refreshInterval;
-                }
-                return remaining;
-            };
-            
-            // 更新显示
             const updateDisplay = () => {
-                const remaining = calculateRemaining();
-                document.getElementById("refreshIntervalDisplay").textContent = formatCountdown(remaining);
+                const now = Date.now();
+                const intervalMs = CONFIG.state.refreshInterval * 1000;
+                const elapsedMs = now - refreshCycleStartTime;
+                const remainingMs = intervalMs - elapsedMs;
+                const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+                
+                document.getElementById("refreshIntervalDisplay").textContent = formatCountdown(remainingSeconds);
             };
             
             // 立即更新一次
             updateDisplay();
-            // 每秒更新一次
-            countdownTimer = setInterval(updateDisplay, 1000);
+            // 使用requestAnimationFrame提高可见性切换时的准确性
+            const animate = () => {
+                if (countdownTimer) {
+                    updateDisplay();
+                    countdownTimer = requestAnimationFrame(animate);
+                }
+            };
+            
+            countdownTimer = requestAnimationFrame(animate);
         }
 
         function stopRefreshCountdown() {
             if (countdownTimer) {
-                clearInterval(countdownTimer);
+                cancelAnimationFrame(countdownTimer);
                 countdownTimer = null;
-            }
-        }
-
-        function resetRefreshCountdown() {
-            // 重置倒计时结束时间为当前时间 + 刷新间隔
-            countdownEndTime = Date.now() + CONFIG.state.refreshInterval * 1000;
-            if (isServiceRunning && CONFIG.state.autoRefresh) {
-                startRefreshCountdown();
             }
         }
 
@@ -947,8 +961,7 @@
             
             if (isServiceRunning) {
                 if (CONFIG.state.autoRefresh) {
-                    startAutoRefresh();
-                    resetRefreshCountdown(); // 开启时重置倒计时
+                    resetRefreshCycle(); // 开启时重置周期
                 } else {
                     stopAutoRefresh();
                     stopRefreshCountdown();
@@ -983,12 +996,10 @@
                 CONFIG.state.refreshInterval = totalSeconds;
                 Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒 (${totalSeconds}秒)`);
                 
-                // 重置倒计时结束时间
-                resetRefreshCountdown();
+                // 重置刷新周期
+                resetRefreshCycle();
                 
-                if (isServiceRunning && CONFIG.state.autoRefresh) {
-                    startAutoRefresh();
-                } else {
+                if (isServiceRunning && !CONFIG.state.autoRefresh) {
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
                     document.getElementById("refreshIntervalDisplay").textContent = 
                         `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
@@ -1072,9 +1083,9 @@
                         renderBetTable();
                         renderPendingBetsTable();
                         
-                        startAutoRefresh();
+                        // 重启定时器应用新间隔
+                        resetRefreshCycle();
                         startBetChecker();
-                        resetRefreshCountdown(); // 保存参数后重置倒计时
                     });
                 } else {
                     const hms = convertToHMS(CONFIG.state.refreshInterval);
@@ -1266,8 +1277,8 @@
             document.getElementById("refreshIntervalDisplay").textContent = 
                 `${hms.hours}:${hms.minutes.toString().padStart(2, '0')}:${hms.seconds.toString().padStart(2, '0')}`;
             
-            // 初始化倒计时结束时间
-            countdownEndTime = Date.now() + CONFIG.state.refreshInterval * 1000;
+            // 初始化刷新周期开始时间
+            refreshCycleStartTime = Date.now();
             
             document.getElementById("betStrategySelect").addEventListener("change", function() {
                 CONFIG.state.betStrategy = this.value;

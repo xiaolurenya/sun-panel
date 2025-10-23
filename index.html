@@ -125,7 +125,7 @@
             }
         };
 
-        // 核心请求函数
+        // 核心请求函数 - 修复错误处理
         async function request(url, method = 'post', data = {}, retry = 1) {
             try {
                 const response = await axios({
@@ -141,16 +141,16 @@
                 Logger.info(`请求成功: ${url}`, true);
                 return response.data;
             } catch (e) {
-                Logger.error(`请求失败: ${e.message} (${url})`, true);
+                Logger.error(`请求失败: ${e.message || '未知错误'} (${url})`, true);
                 if (retry > 0) {
                     Logger.warning(`尝试重试请求: ${url}`, true);
                     return request(url, method, data, retry - 1);
                 }
-                throw new Error(`请求失败: ${e.message}`);
+                throw new Error(`请求失败: ${e.message || '未知错误'}`);
             }
         }
 
-        // API验证
+        // API验证 - 修复返回值判断
         async function verifyApiKey() {
             const apiKey = document.getElementById("apiKeyInput").value;
             if (!apiKey) {
@@ -161,22 +161,23 @@
             try {
                 Logger.info("正在验证API Key...");
                 const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
-                if (result && (result.data || result.code === 0)) {
+                // 修复API验证逻辑，确保正确判断返回结果
+                if (result && (result.code === 0 || Array.isArray(result.data))) {
                     Logger.info("API Key验证成功");
                     return true;
                 } else {
-                    Logger.error(`API Key验证失败`);
+                    Logger.error(`API Key验证失败: ${result?.msg || '返回数据格式不正确'}`);
                     return false;
                 }
             } catch (e) {
                 Logger.warning("主服务器验证失败，尝试备用服务器...");
                 try {
                     const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
-                    if (result && (result.data || result.code === 0)) {
+                    if (result && (result.code === 0 || Array.isArray(result.data))) {
                         Logger.info("备用服务器API Key验证成功");
                         return true;
                     } else {
-                        Logger.error(`备用服务器API Key验证失败`);
+                        Logger.error(`备用服务器API Key验证失败: ${result?.msg || '返回数据格式不正确'}`);
                         return false;
                     }
                 } catch (e2) {
@@ -186,12 +187,13 @@
             }
         }
 
-        // 获取可投注项目
+        // 获取可投注项目 - 修复数据处理
         async function loadBetItems() {
             updateLastActivity();
             try {
                 Logger.info("正在获取可投注项目...");
                 const data = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
+                // 修复数据解析逻辑
                 CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
                 
                 Logger.info(`找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
@@ -263,7 +265,7 @@
                 const homeScore = Math.floor(Math.random() * 3);
                 const awayScore = Math.floor(Math.random() * 2);
                 
-                // 存储测算结果（实际项目中需持久化）
+                // 存储测算结果
                 betItem.aiWinRate = parseFloat(winRate);
                 betItem.aiScore = `${homeScore}-${awayScore}`;
                 
@@ -502,32 +504,50 @@
             }
         }
 
-        // 服务控制
+        // 服务控制 - 修复启动流程
         async function startService() {
             if (isServiceRunning) {
                 Logger.warning("服务已在运行中");
                 return;
             }
             
-            const apiValid = await verifyApiKey();
-            if (!apiValid) {
-                Logger.error("API Key验证失败，无法启动服务");
-                return;
+            // 禁用启动按钮防止重复点击
+            document.getElementById("startServiceBtn").disabled = true;
+            document.getElementById("startServiceBtn").textContent = "启动中...";
+            
+            try {
+                const apiValid = await verifyApiKey();
+                if (!apiValid) {
+                    Logger.error("API Key验证失败，无法启动服务");
+                    // 恢复按钮状态
+                    document.getElementById("startServiceBtn").disabled = false;
+                    document.getElementById("startServiceBtn").textContent = "启动服务";
+                    return;
+                }
+                
+                saveParameters();
+                const loadSuccess = await loadBetItems();
+                if (!loadSuccess) {
+                    Logger.warning("数据加载失败，但仍尝试启动服务");
+                }
+                
+                startAutoRefresh();
+                startBetChecker();
+                
+                resetRefreshCycle();
+                
+                isPageVisible = true;
+                document.addEventListener('visibilitychange', handleVisibilityChange);
+                
+                isServiceRunning = true;
+                updateServiceStatus();
+                Logger.info("服务已启动");
+            } catch (e) {
+                Logger.error(`服务启动失败: ${e.message}`);
+                // 恢复按钮状态
+                document.getElementById("startServiceBtn").disabled = false;
+                document.getElementById("startServiceBtn").textContent = "启动服务";
             }
-            
-            saveParameters();
-            await loadBetItems();
-            startAutoRefresh();
-            startBetChecker();
-            
-            resetRefreshCycle();
-            
-            isPageVisible = true;
-            document.addEventListener('visibilitychange', handleVisibilityChange);
-            
-            isServiceRunning = true;
-            updateServiceStatus();
-            Logger.info("服务已启动");
         }
 
         function stopService() {
@@ -548,6 +568,9 @@
             
             isServiceRunning = false;
             updateServiceStatus();
+            // 恢复启动按钮状态
+            document.getElementById("startServiceBtn").disabled = false;
+            document.getElementById("startServiceBtn").textContent = "启动服务";
             Logger.info("服务已停止");
         }
 
@@ -914,6 +937,11 @@
             
             Logger.info("系统已启动，等待操作...");
         });
+
+        // 辅助函数：更新最后活动时间
+        function updateLastActivity() {
+            lastActivityTime = Date.now();
+        }
     </script>
 </head>
 <body class="bg-gray-50 p-4 md:p-6">

@@ -2,117 +2,793 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>AI智能投注系统</title>
-    <style>
-        .data-panel { margin: 20px; padding: 15px; border: 1px solid #ccc; }
-        .countdown { color: #ff0000; font-weight: bold; }
-        .bet-btn { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; }
-        .bet-btn:disabled { background: #cccccc; cursor: not-allowed; }
-    </style>
-</head>
-<body>
-    <div class="data-panel">
-        <h3>实时数据 <span id="refresh-time"></span></h3>
-        <p>当前胜率: <span id="win-rate">0%</span></p>
-        <p>推荐比分: <span id="score-prediction">0-0</span></p>
-        <p>投注截止: <span class="countdown" id="countdown">00:00:30</span></p>
-        <button class="bet-btn" id="auto-bet-btn" disabled>AI自动投注</button>
-    </div>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M-Team 投注系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
     <script>
-        // 数据刷新间隔(毫秒)
-        const REFRESH_INTERVAL = 100; // 100ms刷新一次
-        // 自动下注触发时间(秒)
-        const AUTO_BET_TRIGGER_SEC = 30;
-        
-        let countdownSec = 60; // 总倒计时时间(秒)
-        let isAutoBetExecuted = false;
-        const $winRate = document.getElementById('win-rate');
-        const $scorePrediction = document.getElementById('score-prediction');
-        const $countdown = document.getElementById('countdown');
-        const $autoBetBtn = document.getElementById('auto-bet-btn');
-        const $refreshTime = document.getElementById('refresh-time');
-
-        // 更新倒计时显示
-        function updateCountdown() {
-            const hours = Math.floor(countdownSec / 3600).toString().padStart(2, '0');
-            const minutes = Math.floor((countdownSec % 3600) / 60).toString().padStart(2, '0');
-            const seconds = (countdownSec % 60).toString().padStart(2, '0');
-            $countdown.textContent = `${hours}:${minutes}:${seconds}`;
-            
-            // 剩余30秒时触发AI最终计算
-            if (countdownSec === AUTO_BET_TRIGGER_SEC && !isAutoBetExecuted) {
-                aiFinalOptimization();
-            }
-            
-            if (countdownSec <= 0) {
-                clearInterval(countdownTimer);
-                $autoBetBtn.disabled = true;
-                $autoBetBtn.textContent = '投注已截止';
-            } else {
-                countdownSec--;
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#36CFC9',
+                        success: '#52C41A',
+                        warning: '#FAAD14',
+                        danger: '#FF4D4F',
+                        dark: '#1F2937',
+                        light: '#F9FAFB',
+                        purple: '#7B61FF'
+                    }
+                }
             }
         }
-
-        // AI数据优化计算
-        function aiDataOptimization() {
-            // 模拟AI计算过程
-            const winRate = (50 + Math.random() * 40).toFixed(1); // 50%-90%随机胜率
-            const homeScore = Math.floor(Math.random() * 3);
-            const awayScore = Math.floor(Math.random() * 2);
-            
-            // 更新UI显示
-            $winRate.textContent = `${winRate}%`;
-            $scorePrediction.textContent = `${homeScore}-${awayScore}`;
-            $refreshTime.textContent = `(最后刷新: ${new Date().toISOString().split('T')[1]})`;
-            
-            return {
-                winRate: parseFloat(winRate),
-                score: `${homeScore}-${awayScore}`
-            };
-        }
-
-        // 最终30秒AI优化
-        function aiFinalOptimization() {
-            console.log('触发最后30秒AI优化计算');
-            const finalData = aiDataOptimization();
-            
-            // 满足高胜率条件自动投注
-            if (finalData.winRate >= 70) { // 胜率阈值可配置
-                autoBet(finalData);
-            }
-        }
-
-        // 自动下注操作
-        function autoBet(data) {
-            isAutoBetExecuted = true;
-            $autoBetBtn.textContent = `已自动投注 (胜率: ${data.winRate}%)`;
-            
-            // 模拟投注API调用
-            console.log(`执行自动投注: 推荐比分${data.score}, 胜率${data.winRate}%`);
-            // 实际项目中这里会调用后端投注接口
-            // fetch('/api/bet', {
-            //     method: 'POST',
-            //     body: JSON.stringify({ score: data.score, winRate: data.winRate })
-            // });
-        }
-
-        // 初始化定时器
-        const dataRefreshTimer = setInterval(aiDataOptimization, REFRESH_INTERVAL);
-        const countdownTimer = setInterval(updateCountdown, 1000);
-
-        // 手动触发投注按钮
-        $autoBetBtn.addEventListener('click', () => {
-            if (!isAutoBetExecuted && countdownSec > 0) {
-                const currentData = aiDataOptimization();
-                autoBet(currentData);
-            }
-        });
-
-        // 初始加载
-        aiDataOptimization();
-        updateCountdown();
-        $autoBetBtn.disabled = false;
     </script>
-</body>
-</html>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            }
+            .hover-lift {
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            .hover-lift:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+            }
+        }
+    </style>
+    <script>
+        // 全局变量和配置
+        const CONFIG = {
+            mainHost: "https://api.m-team.io/api",
+            testHost: "https://test2.m-team.cc/api",
+            apis: {
+                "get_current_bet": "bet/findBetgameList?active=LIVE&fix=0",
+                "betgameOdds": "bet/betgameOdds?optId={optId}&bonus={bonus}",
+                "get_details": "bet/getDetail?gameId={gameId}",
+                "get_gamblers": "bet/getDetailBetList?gameId={gameId}",
+                "get_my_bet_log": "bet/myCouponLog"
+            },
+            state: {
+                availableBets: [],
+                autoRefresh: true,
+                refreshInterval: 30,
+                targetUserId: "205809",
+                advanceSeconds: 3,
+                toleranceSeconds: 10,
+                amountRange: 20000,
+                baseAmount: 10000,
+                betStrategy: "higher_odds",
+                checkInterval: 2,
+                detailedLogMode: false,
+                oddsThreshold: 1.5,
+                pendingFilter: "all",
+                slippageTolerance: 0.05,
+                followCheckInterval: 500
+            }
+        };
+
+        // 全局状态
+        let isServiceRunning = false;
+        let pendingBets = [];
+        let autoRefreshTimer = null;
+        let betCheckTimer = null;
+        let followCheckTimers = {};
+        let lastActivityTime = 0;
+        let isPageVisible = true;
+        let refreshCycleStartTime = 0;
+        
+        // 日志系统
+        const Logger = {
+            logs: [],
+            detailedMode: false,
+            log(content, level = "INFO", detailed = false) {
+                if (detailed && !this.detailedMode) return;
+                
+                const now = new Date().toLocaleString("zh-CN", {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                const logItem = `[${now}] [${level}] ${content}`;
+                this.logs.unshift(logItem);
+                if (this.logs.length > 500) this.logs.pop();
+                this.render();
+            },
+            info(content, detailed = false) { this.log(content, "INFO", detailed); },
+            error(content, detailed = false) { this.log(content, "ERROR", detailed); },
+            warning(content, detailed = false) { this.log(content, "WARN", detailed); },
+            clear() {
+                this.logs = [];
+                this.render();
+                this.info("日志已清空");
+            },
+            render() {
+                const panel = document.getElementById('logPanel');
+                if (panel) {
+                    panel.innerHTML = this.logs.map(log => 
+                        `<div class="py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
+                    ).join("");
+                    panel.scrollTop = panel.scrollHeight;
+                }
+            }
+        };
+
+        // 核心请求函数
+        async function request(url, method = 'post', data = {}, retry = 1) {
+            try {
+                const response = await axios({
+                    method,
+                    url,
+                    data,
+                    headers: {
+                        "x-api-key": document.getElementById("apiKeyInput").value || "",
+                        "Content-Type": "application/json"
+                    },
+                    timeout: 15000
+                });
+                Logger.info(`请求成功: ${url}`, true);
+                return response.data;
+            } catch (e) {
+                Logger.error(`请求失败: ${e.message} (${url})`, true);
+                if (retry > 0) {
+                    Logger.warning(`尝试重试请求: ${url}`, true);
+                    return request(url, method, data, retry - 1);
+                }
+                throw new Error(`请求失败: ${e.message}`);
+            }
+        }
+
+        // API验证
+        async function verifyApiKey() {
+            const apiKey = document.getElementById("apiKeyInput").value;
+            if (!apiKey) {
+                Logger.warning("请输入API Key");
+                return false;
+            }
+
+            try {
+                Logger.info("正在验证API Key...");
+                const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
+                if (result && (result.data || result.code === 0)) {
+                    Logger.info("API Key验证成功");
+                    return true;
+                } else {
+                    Logger.error(`API Key验证失败`);
+                    return false;
+                }
+            } catch (e) {
+                Logger.warning("主服务器验证失败，尝试备用服务器...");
+                try {
+                    const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
+                    if (result && (result.data || result.code === 0)) {
+                        Logger.info("备用服务器API Key验证成功");
+                        return true;
+                    } else {
+                        Logger.error(`备用服务器API Key验证失败`);
+                        return false;
+                    }
+                } catch (e2) {
+                    Logger.error(`API Key验证失败: ${e2.message}`);
+                    return false;
+                }
+            }
+        }
+
+        // 获取可投注项目
+        async function loadBetItems() {
+            updateLastActivity();
+            try {
+                Logger.info("正在获取可投注项目...");
+                const data = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
+                CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
+                
+                Logger.info(`找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
+                
+                processPendingBets(true);
+                renderBetTable();
+                resetRefreshCycle();
+                return true;
+            } catch (e) {
+                Logger.warning("主服务器获取失败，尝试备用服务器...");
+                try {
+                    const data = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
+                    CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
+                    
+                    Logger.info(`从备用服务器找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
+                    
+                    processPendingBets(true);
+                    renderBetTable();
+                    resetRefreshCycle();
+                    return true;
+                } catch (e2) {
+                    Logger.error(`获取投注项目失败: ${e2.message}`);
+                    resetRefreshCycle();
+                    return false;
+                }
+            }
+        }
+
+        // 处理待投注项目
+        function processPendingBets(refresh = false) {
+            const now = new Date();
+            const processingItems = refresh ? pendingBets.filter(bet => bet.status === "处理中") : [];
+            let newPendingBets = [...processingItems];
+            
+            // 这里可以添加您的投注逻辑
+            renderPendingBetsTable();
+        }
+
+        // 开始跟随检查
+        function startFollowingCheck(gameId) {
+            if (followCheckTimers[gameId]) {
+                clearInterval(followCheckTimers[gameId]);
+            }
+            
+            const checkInterval = CONFIG.state.followCheckInterval;
+            Logger.info(`开始监控项目 #${gameId} 的目标用户投注 (检查间隔: ${checkInterval}ms)`, true);
+            
+            followCheckTimers[gameId] = setInterval(async () => {
+                if (!isServiceRunning) {
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                    return;
+                }
+                
+                // 检查项目是否仍然有效
+                const betItem = CONFIG.state.availableBets.find(item => item.id === gameId);
+                if (!betItem) {
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                    Logger.info(`项目 #${gameId} 已失效，停止监控`, true);
+                    return;
+                }
+                
+                // 这里可以添加跟随检查逻辑
+            }, checkInterval);
+        }
+
+        // 执行投注
+        async function placeBet(betItem) {
+            updateLastActivity();
+            try {
+                Logger.info(`开始为项目 #${betItem.id} 下注`);
+                
+                // 这里可以添加投注逻辑
+                
+                Logger.info(`项目 #${betItem.id} 下注成功`);
+                return true;
+            } catch (e) {
+                Logger.error(`项目 #${betItem.id} 下注失败: ${e.message}`);
+                return false;
+            }
+        }
+
+        // 检查并执行待下注
+        function checkAndPlaceBets() {
+            if (!isServiceRunning) return;
+            
+            updateLastActivity();
+            const now = new Date();
+            Logger.info("正在检查待下注项目...", true);
+            
+            // 这里可以添加检查逻辑
+            
+            if (isServiceRunning) {
+                betCheckTimer = setTimeout(checkAndPlaceBets, CONFIG.state.checkInterval * 1000);
+            }
+        }
+
+        // 服务控制
+        async function startService() {
+            if (isServiceRunning) {
+                Logger.warning("服务已在运行中");
+                return;
+            }
+            
+            const apiValid = await verifyApiKey();
+            if (!apiValid) {
+                Logger.error("API Key验证失败，无法启动服务");
+                return;
+            }
+            
+            saveParameters();
+            await loadBetItems();
+            startAutoRefresh();
+            startBetChecker();
+            
+            resetRefreshCycle();
+            
+            isPageVisible = true;
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            
+            isServiceRunning = true;
+            updateServiceStatus();
+            Logger.info("服务已启动");
+        }
+
+        function stopService() {
+            if (!isServiceRunning) {
+                Logger.warning("服务未在运行中");
+                return;
+            }
+            
+            Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
+            followCheckTimers = {};
+            
+            stopAutoRefresh();
+            stopBetChecker();
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            
+            isServiceRunning = false;
+            updateServiceStatus();
+            Logger.info("服务已停止");
+        }
+
+        // 自动刷新控制
+        function startAutoRefresh() {
+            stopAutoRefresh();
+            
+            const refresh = () => {
+                if (CONFIG.state.autoRefresh && isServiceRunning) {
+                    loadBetItems();
+                }
+                
+                if (isServiceRunning && CONFIG.state.autoRefresh) {
+                    scheduleNextRefresh();
+                }
+            };
+            
+            refresh();
+        }
+
+        function scheduleNextRefresh() {
+            const now = Date.now();
+            const intervalMs = CONFIG.state.refreshInterval * 1000;
+            const nextRefreshTime = refreshCycleStartTime + intervalMs;
+            const delay = Math.max(0, nextRefreshTime - now);
+            
+            autoRefreshTimer = setTimeout(() => {
+                if (isServiceRunning && CONFIG.state.autoRefresh) {
+                    loadBetItems();
+                }
+            }, delay);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearTimeout(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+        }
+
+        // 投注检查器
+        function startBetChecker() {
+            stopBetChecker();
+            checkAndPlaceBets();
+        }
+
+        function stopBetChecker() {
+            if (betCheckTimer) {
+                clearTimeout(betCheckTimer);
+                betCheckTimer = null;
+            }
+        }
+
+        // 页面可见性处理
+        function handleVisibilityChange() {
+            const wasVisible = isPageVisible;
+            isPageVisible = document.visibilityState === 'visible';
+            
+            if (isPageVisible && !wasVisible && isServiceRunning) {
+                Logger.info("页面恢复可见");
+                startAutoRefresh();
+                if (!betCheckTimer) {
+                    startBetChecker();
+                }
+            }
+        }
+
+        // 刷新周期控制
+        function resetRefreshCycle() {
+            refreshCycleStartTime = Date.now();
+        }
+
+        // 参数转换工具
+        function convertToSeconds(hours, minutes, seconds) {
+            return (hours * 3600) + (minutes * 60) + seconds;
+        }
+
+        function convertToHMS(totalSeconds) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            return { hours, minutes, seconds };
+        }
+
+        // 参数设置
+        function setRefreshInterval() {
+            const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
+            const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
+            const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
+            
+            const totalSeconds = convertToSeconds(hours, minutes, seconds);
+            
+            if (totalSeconds >= 5 && totalSeconds <= 86400) {
+                CONFIG.state.refreshInterval = totalSeconds;
+                Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒`);
+                
+                if (isServiceRunning) {
+                    resetRefreshCycle();
+                    startAutoRefresh();
+                }
+            } else {
+                Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
+            }
+        }
+
+        function saveParameters() {
+            try {
+                CONFIG.state.targetUserId = document.getElementById("targetUserIdInput").value || "205809";
+                CONFIG.state.advanceSeconds = Math.max(0, parseInt(document.getElementById("advanceSecondsInput").value) || 3);
+                CONFIG.state.toleranceSeconds = Math.max(0, parseInt(document.getElementById("toleranceSecondsInput").value) || 10);
+                CONFIG.state.amountRange = Math.max(0, parseInt(document.getElementById("amountRangeInput").value) || 20000);
+                CONFIG.state.baseAmount = Math.max(100, parseInt(document.getElementById("baseAmountInput").value) || 10000);
+                CONFIG.state.betStrategy = document.getElementById("betStrategySelect").value || "higher_odds";
+                CONFIG.state.checkInterval = Math.max(0.1, parseFloat(document.getElementById("checkIntervalInput").value) || 2);
+                CONFIG.state.oddsThreshold = Math.max(1.0, parseFloat(document.getElementById("oddsThresholdInput").value) || 1.5);
+                CONFIG.state.slippageTolerance = Math.max(0.01, parseFloat(document.getElementById("slippageToleranceInput").value) || 0.05);
+                CONFIG.state.followCheckInterval = Math.max(100, parseInt(document.getElementById("followCheckIntervalInput").value) || 500);
+                
+                Logger.info(`参数已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s`);
+                
+                if (isServiceRunning) {
+                    processPendingBets(true);
+                    renderBetTable();
+                    renderPendingBetsTable();
+                    
+                    if (CONFIG.state.betStrategy === "follow") {
+                        CONFIG.state.availableBets.forEach(bet => {
+                            startFollowingCheck(bet.id);
+                        });
+                    }
+                }
+                
+                return true;
+            } catch (e) {
+                Logger.error(`保存参数失败: ${e.message}`);
+                return false;
+            }
+        }
+
+        // 界面更新
+        function updateServiceStatus() {
+            const startBtn = document.getElementById("startServiceBtn");
+            const stopBtn = document.getElementById("stopServiceBtn");
+            const statusIndicator = document.getElementById("serviceStatusIndicator");
+            const statusText = document.getElementById("serviceStatusText");
+            
+            startBtn.disabled = isServiceRunning;
+            stopBtn.disabled = !isServiceRunning;
+            
+            if (statusIndicator) {
+                statusIndicator.className = isServiceRunning 
+                    ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
+                    : "inline-block w-3 h-3 rounded-full bg-gray-400 mr-2";
+            }
+            
+            if (statusText) {
+                statusText.textContent = isServiceRunning ? "服务运行中" : "服务已停止";
+            }
+        }
+
+        // 表格渲染
+        function renderBetTable() {
+            const table = document.getElementById("betItemsTable");
+            if (!table) return;
+            
+            if (CONFIG.state.availableBets.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                <span>无可用投注项目</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = `
+                <tr class="bg-gray-50">
+                    <th class="border p-3 text-left font-semibold">ID</th>
+                    <th class="border p-3 text-left font-semibold">描述</th>
+                    <th class="border p-3 text-left font-semibold">选项 (赔率)</th>
+                    <th class="border p-3 text-left font-semibold">最高赔率</th>
+                    <th class="border p-3 text-left font-semibold">结束时间</th>
+                </tr>
+            `;
+            
+            CONFIG.state.availableBets.forEach(item => {
+                const highestOption = item.optionsList && item.optionsList.length > 0 
+                    ? item.optionsList.reduce((max, opt) => 
+                        parseFloat(opt.odds) > parseFloat(max.odds) ? opt : max, item.optionsList[0])
+                    : null;
+                
+                let optionsHtml = "";
+                if (item.optionsList && item.optionsList.length > 0) {
+                    item.optionsList.forEach(opt => {
+                        const isHighest = highestOption && opt.id === highestOption.id;
+                        optionsHtml += `<div class="${isHighest ? 'font-bold text-success' : ''} py-1">
+                            ${opt.text} (${opt.odds})
+                        </div>`;
+                    });
+                } else {
+                    optionsHtml = "无选项";
+                }
+                
+                html += `<tr class="hover:bg-gray-50 transition-colors">
+                    <td class="border p-3">${item.id}</td>
+                    <td class="border p-3">${item.heading || '无描述'}</td>
+                    <td class="border p-3">${optionsHtml}</td>
+                    <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
+                    <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        function renderPendingBetsTable() {
+            const table = document.getElementById("pendingBetsTable");
+            if (!table) return;
+            
+            if (pendingBets.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
+                                <span>暂无待投注项目</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = `
+                <tr class="bg-gray-50">
+                    <th class="border p-3 text-left font-semibold">ID</th>
+                    <th class="border p-3 text-left font-semibold">描述</th>
+                    <th class="border p-3 text-left font-semibold">投注对象</th>
+                    <th class="border p-3 text-left font-semibold">下注时间</th>
+                    <th class="border p-3 text-left font-semibold">状态</th>
+                </tr>
+            `;
+            
+            pendingBets.forEach(bet => {
+                let statusClass = "text-primary";
+                let statusBadge = "等待中";
+                
+                if (bet.status === "处理中") {
+                    statusClass = "text-warning";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
+                }
+                if (bet.status === "已完成") {
+                    statusClass = "text-success";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
+                }
+                if (bet.status === "失败") {
+                    statusClass = "text-danger";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
+                }
+                
+                html += `<tr class="hover:bg-gray-50 transition-colors">
+                    <td class="border p-3">${bet.id}</td>
+                    <td class="border p-3">${bet.heading || '无描述'}</td>
+                    <td class="border p-3 font-bold text-success">${bet.highestOddsTeam}</td>
+                    <td class="border p-3">${bet.betTime.toLocaleString()}</td>
+                    <td class="border p-3 ${statusClass}">${statusBadge}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        // 页面初始化
+        document.addEventListener("DOMContentLoaded", () => {
+            // 初始化表单值
+            document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
+            document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
+            document.getElementById("toleranceSecondsInput").value = CONFIG.state.toleranceSeconds;
+            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
+            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
+            document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
+            document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
+            document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
+            document.getElementById("slippageToleranceInput").value = CONFIG.state.slippageTolerance;
+            document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
+            
+            const hms = convertToHMS(CONFIG.state.refreshInterval);
+            document.getElementById("refreshHoursInput").value = hms.hours;
+            document.getElementById("refreshMinutesInput").value = hms.minutes;
+            document.getElementById("refreshSecondsInput").value = hms.seconds;
+            
+            // 绑定事件
+            document.getElementById("startServiceBtn").addEventListener("click", startService);
+            document.getElementById("stopServiceBtn").addEventListener("click", stopService);
+            document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
+            document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
+            document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
+            document.getElementById("manualRefreshBtn").addEventListener("click", loadBetItems);
+            document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
+            
+            // 初始化界面
+            renderBetTable();
+            renderPendingBetsTable();
+            updateServiceStatus();
+            
+            Logger.info("系统已启动，等待操作...");
+        });
+    </script>
+</head>
+<body class="bg-gray-50 p-4 md:p-6">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold text-primary mb-2">M-Team 投注系统</h1>
+            <p class="text-gray-500">自动投注管理平台</p>
+        </header>
+        
+        <!-- 服务控制区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-cogs text-primary mr-2"></i>服务控制
+                <span class="ml-3 text-sm font-normal text-gray-500">
+                    <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
+                    <span id="serviceStatusText">服务未运行</span>
+                </span>
+            </h2>
+            <div class="flex flex-wrap gap-3">
+                <button id="startServiceBtn" class="bg-primary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-primary/90 transition-colors">
+                    <i class="fa fa-play mr-2"></i>启动服务
+                </button>
+                <button id="stopServiceBtn" class="bg-danger text-white px-5 py-2.5 rounded-lg flex items-center opacity-50 cursor-not-allowed" disabled>
+                    <i class="fa fa-stop mr-2"></i>停止服务
+                </button>
+                <button id="clearLogBtn" class="bg-warning text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-warning/90 transition-colors">
+                    <i class="fa fa-trash mr-2"></i>清理日志
+                </button>
+            </div>
+        </div>
+        
+        <!-- API配置区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-success">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-key text-success mr-2"></i>API 配置
+            </h2>
+            <div class="flex flex-wrap gap-3 items-center">
+                <input type="text" id="apiKeyInput" placeholder="输入API Key" class="flex-1 min-w-[300px] p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success focus:border-success outline-none transition-shadow">
+                <button id="verifyApiBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
+                    验证API Key
+                </button>
+            </div>
+        </div>
+        
+        <!-- 参数设置区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-warning">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-sliders text-warning mr-2"></i>投注参数设置
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">目标用户ID（跟随策略）</label>
+                    <input type="text" id="targetUserIdInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">提前下注秒数</label>
+                    <input type="number" id="advanceSecondsInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">容忍秒数</label>
+                    <input type="number" id="toleranceSecondsInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">金额波动范围</label>
+                    <input type="number" id="amountRangeInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">基础金额</label>
+                    <input type="number" id="baseAmountInput" min="1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">投注策略</label>
+                    <select id="betStrategySelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <option value="larger">押大</option>
+                        <option value="smaller">押小</option>
+                        <option value="follow">跟随用户</option>
+                        <option value="higher_odds">高赔率自动下注</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">投注检查间隔(秒)</label>
+                    <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔(毫秒)</label>
+                    <input type="number" id="followCheckIntervalInput" min="100" max="3000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">数据刷新间隔</label>
+                    <div class="flex gap-2">
+                        <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">赔率阈值（高赔率策略）</label>
+                    <input type="number" id="oddsThresholdInput" min="1.0" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">滑点容忍度（0.05=5%）</label>
+                    <input type="number" id="slippageToleranceInput" min="0.01" max="0.5" step="0.01" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+            </div>
+            <div class="text-right">
+                <button id="saveParamsBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
+                    保存参数
+                </button>
+                <button id="setIntervalBtn" class="bg-gray-600 text-white px-5 py-2.5 rounded-lg ml-2 hover:bg-gray-700 transition-colors">
+                    设置刷新间隔
+                </button>
+            </div>
+        </div>
+        
+        <!-- 可投注项目区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-list text-primary mr-2"></i>可投注项目
+            </h2>
+            <div class="flex flex-wrap gap-3 mb-5 items-center justify-between">
+                <button id="manualRefreshBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
+                    手动刷新
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table id="betItemsTable" class="min-w-full border-collapse">
+                    <tr>
+                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                <span>请启动服务或手动刷新</span>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <!-- 待投注项目区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-purple-500">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-calendar text-purple-500 mr-2"></i>待投注项目
+            </h2>
+            <div class="overflow-x-auto">
+                <table id="pendingBetsTable" class="min-w-full border-collapse">
+                    <tr>
+                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
+                                <span>暂无待投注项目</span>
+                            </div>
+                        </td>
+                    </tr>
+                </table>

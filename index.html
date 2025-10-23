@@ -57,7 +57,8 @@
             state: {
                 availableBets: [],
                 autoRefresh: true,
-                refreshInterval: 30,
+                refreshInterval: 30, // 秒
+                refreshIntervalMs: 0, // 毫秒
                 targetUserId: "205809",
                 advanceSeconds: 3,
                 toleranceSeconds: 10,
@@ -69,7 +70,10 @@
                 oddsThreshold: 1.5,
                 pendingFilter: "all",
                 slippageTolerance: 0.05,
-                followCheckInterval: 500
+                followCheckInterval: 500, // 毫秒
+                followCheckIntervalSec: 0, // 秒
+                aiRefreshInterval: 1000, // AI后台刷新间隔(毫秒)
+                autoBetTriggerSec: 30 // 自动下注触发时间(秒)
             }
         };
 
@@ -79,6 +83,7 @@
         let autoRefreshTimer = null;
         let betCheckTimer = null;
         let followCheckTimers = {};
+        let aiRefreshTimers = {};
         let lastActivityTime = 0;
         let isPageVisible = true;
         let refreshCycleStartTime = 0;
@@ -93,7 +98,8 @@
                 const now = new Date().toLocaleString("zh-CN", {
                     hour: '2-digit',
                     minute: '2-digit',
-                    second: '2-digit'
+                    second: '2-digit',
+                    fractionalSecondDigits: 3
                 });
                 const logItem = `[${now}] [${level}] ${content}`;
                 this.logs.unshift(logItem);
@@ -190,6 +196,13 @@
                 
                 Logger.info(`找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
                 
+                // 启动AI后台刷新（非跟随模式）
+                if (CONFIG.state.betStrategy !== "follow") {
+                    CONFIG.state.availableBets.forEach(bet => {
+                        startAIRefresh(bet.id);
+                    });
+                }
+                
                 processPendingBets(true);
                 renderBetTable();
                 resetRefreshCycle();
@@ -201,6 +214,13 @@
                     CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
                     
                     Logger.info(`从备用服务器找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
+                    
+                    // 启动AI后台刷新（非跟随模式）
+                    if (CONFIG.state.betStrategy !== "follow") {
+                        CONFIG.state.availableBets.forEach(bet => {
+                            startAIRefresh(bet.id);
+                        });
+                    }
                     
                     processPendingBets(true);
                     renderBetTable();
@@ -214,13 +234,91 @@
             }
         }
 
+        // AI后台实时刷新队伍胜率/比分
+        function startAIRefresh(gameId) {
+            if (aiRefreshTimers[gameId]) {
+                clearInterval(aiRefreshTimers[gameId]);
+            }
+            
+            Logger.info(`启动项目 #${gameId} 的AI后台刷新 (间隔: ${CONFIG.state.aiRefreshInterval}ms)`, true);
+            
+            aiRefreshTimers[gameId] = setInterval(async () => {
+                if (!isServiceRunning) {
+                    clearInterval(aiRefreshTimers[gameId]);
+                    delete aiRefreshTimers[gameId];
+                    return;
+                }
+                
+                // 检查项目是否仍然有效
+                const betItem = CONFIG.state.availableBets.find(item => item.id === gameId);
+                if (!betItem) {
+                    clearInterval(aiRefreshTimers[gameId]);
+                    delete aiRefreshTimers[gameId];
+                    Logger.info(`项目 #${gameId} 已失效，停止AI刷新`, true);
+                    return;
+                }
+                
+                // 模拟AI测算（实际项目中需对接真实AI接口）
+                const winRate = (50 + Math.random() * 40).toFixed(1);
+                const homeScore = Math.floor(Math.random() * 3);
+                const awayScore = Math.floor(Math.random() * 2);
+                
+                // 存储测算结果（实际项目中需持久化）
+                betItem.aiWinRate = parseFloat(winRate);
+                betItem.aiScore = `${homeScore}-${awayScore}`;
+                
+                // 最后30秒自动触发下注
+                const endTime = new Date(betItem.endtime);
+                const now = new Date();
+                const remainingSec = Math.max(0, Math.floor((endTime - now) / 1000));
+                
+                if (remainingSec <= CONFIG.state.autoBetTriggerSec && !pendingBets.some(bet => bet.id === gameId)) {
+                    Logger.info(`项目 #${gameId} 进入最后${CONFIG.state.autoBetTriggerSec}秒，触发自动下注`, true);
+                    pendingBets.push({
+                        ...betItem,
+                        status: "等待中",
+                        betTime: new Date(),
+                        betAmount: calculateBetAmount(),
+                        highestOddsTeam: getHighestOddsOption(betItem)?.text || "未知",
+                        highestOdds: getHighestOddsOption(betItem)?.odds || 0
+                    });
+                    renderPendingBetsTable();
+                    checkAndPlaceBets();
+                }
+            }, CONFIG.state.aiRefreshInterval);
+        }
+
+        // 计算投注金额
+        function calculateBetAmount() {
+            if (CONFIG.state.amountRange <= 0) return CONFIG.state.baseAmount;
+            const randomOffset = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
+            return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
+        }
+
+        // 获取最高赔率选项
+        function getHighestOddsOption(betItem) {
+            if (!betItem.optionsList || betItem.optionsList.length === 0) return null;
+            
+            let highestOdds = -Infinity;
+            let highestOption = null;
+            
+            betItem.optionsList.forEach(option => {
+                const odds = parseFloat(option.odds);
+                if (odds > highestOdds) {
+                    highestOdds = odds;
+                    highestOption = option;
+                }
+            });
+            
+            return highestOption;
+        }
+
         // 处理待投注项目
         function processPendingBets(refresh = false) {
             const now = new Date();
             const processingItems = refresh ? pendingBets.filter(bet => bet.status === "处理中") : [];
             let newPendingBets = [...processingItems];
             
-            // 这里可以添加您的投注逻辑
             renderPendingBetsTable();
         }
 
@@ -249,23 +347,123 @@
                     return;
                 }
                 
-                // 这里可以添加跟随检查逻辑
+                // 获取目标用户投注
+                const targetBet = await getTargetUserBet(gameId);
+                if (targetBet) {
+                    // 立即执行跟随投注
+                    const followBet = {
+                        ...betItem,
+                        id: gameId,
+                        betTime: new Date(),
+                        betAmount: calculateFollowAmount(targetBet.bonus),
+                        strategy: "follow",
+                        status: "处理中",
+                        highestOddsTeam: betItem.optionsList.find(opt => opt.id === targetBet.optionid)?.text || "未知",
+                        highestOdds: parseFloat(betItem.optionsList.find(opt => opt.id === targetBet.optionid)?.odds || 0),
+                        recordedOdds: 0
+                    };
+                    
+                    pendingBets.unshift(followBet);
+                    renderPendingBetsTable();
+                    
+                    // 执行投注
+                    const success = await placeBet(followBet, targetBet.optionid);
+                    
+                    // 更新状态
+                    const index = pendingBets.findIndex(b => b.id === gameId && b.status === "处理中");
+                    if (index !== -1) {
+                        pendingBets[index].status = success ? "已完成" : "失败";
+                        renderPendingBetsTable();
+                    }
+                    
+                    // 停止监控
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                }
             }, checkInterval);
         }
 
+        // 计算跟随金额
+        function calculateFollowAmount(baseAmount) {
+            const base = parseInt(baseAmount) || 0;
+            const bias = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
+            return Math.max(base + bias, 100);
+        }
+
+        // 获取目标用户的投注记录
+        async function getTargetUserBet(gameId) {
+            try {
+                Logger.info(`尝试获取目标用户 ${CONFIG.state.targetUserId} 的投注记录 (项目 #${gameId})`, true);
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
+                const data = await request(url);
+                
+                if (data?.data && Array.isArray(data.data)) {
+                    const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);
+                    if (targetBet) {
+                        Logger.info(`找到目标用户 ${CONFIG.state.targetUserId} 的投注记录: 选项 ${targetBet.optionid}, 金额 ${targetBet.bonus}`, true);
+                    } else {
+                        Logger.info(`未找到目标用户 ${CONFIG.state.targetUserId} 的投注记录`, true);
+                    }
+                    return targetBet;
+                }
+                return null;
+            } catch (e) {
+                Logger.warning(`获取用户投注记录失败: ${e.message}，尝试备用服务器`, true);
+                try {
+                    const url = `${CONFIG.testHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
+                    const data = await request(url);
+                    
+                    if (data?.data && Array.isArray(data.data)) {
+                        const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);
+                        return targetBet;
+                    }
+                    return null;
+                } catch (e2) {
+                    Logger.error(`获取用户投注记录失败: ${e2.message}`, true);
+                    return null;
+                }
+            }
+        }
+
         // 执行投注
-        async function placeBet(betItem) {
+        async function placeBet(betItem, optionId) {
             updateLastActivity();
             try {
-                Logger.info(`开始为项目 #${betItem.id} 下注`);
+                Logger.info(`开始为项目 #${betItem.id} 下注，金额: ${betItem.betAmount}`);
                 
-                // 这里可以添加投注逻辑
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
+                    .replace('{optId}', optionId)
+                    .replace('{bonus}', betItem.betAmount)}`;
+                
+                const result = await request(url);
+                
+                if (result.code !== 0) {
+                    Logger.error(`项目 #${betItem.id} 投注失败（滑点）: ${result.msg || '未知错误'}`);
+                    return false;
+                }
                 
                 Logger.info(`项目 #${betItem.id} 下注成功`);
                 return true;
             } catch (e) {
-                Logger.error(`项目 #${betItem.id} 下注失败: ${e.message}`);
-                return false;
+                Logger.warning("主服务器下注失败，尝试备用服务器...");
+                try {
+                    const url = `${CONFIG.testHost}/${CONFIG.apis.betgameOdds
+                        .replace('{optId}', optionId)
+                        .replace('{bonus}', betItem.betAmount)}`;
+                    
+                    const result = await request(url);
+                    
+                    if (result.code !== 0) {
+                        Logger.error(`备用服务器 - 项目 #${betItem.id} 投注失败: ${result.msg || '未知错误'}`);
+                        return false;
+                    }
+                    
+                    Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
+                    return true;
+                } catch (e2) {
+                    Logger.error(`项目 #${betItem.id} 下注请求失败: ${e2.message}`);
+                    return false;
+                }
             }
         }
 
@@ -277,7 +475,27 @@
             const now = new Date();
             Logger.info("正在检查待下注项目...", true);
             
-            // 这里可以添加检查逻辑
+            pendingBets.forEach(bet => {
+                if (now >= new Date(bet.betTime) && bet.status === "等待中") {
+                    bet.status = "处理中";
+                    renderPendingBetsTable();
+                    
+                    (async () => {
+                        let optionId = "";
+                        if (CONFIG.state.betStrategy === "higher_odds") {
+                            const highestOption = getHighestOddsOption(bet);
+                            optionId = highestOption ? highestOption.id : "";
+                        } else if (CONFIG.state.betStrategy === "follow") {
+                            // 跟随模式已在监控时处理
+                            return;
+                        }
+                        
+                        const success = await placeBet(bet, optionId);
+                        bet.status = success ? "已完成" : "失败";
+                        renderPendingBetsTable();
+                    })();
+                }
+            });
             
             if (isServiceRunning) {
                 betCheckTimer = setTimeout(checkAndPlaceBets, CONFIG.state.checkInterval * 1000);
@@ -318,8 +536,11 @@
                 return;
             }
             
+            // 清除所有定时器
             Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
+            Object.values(aiRefreshTimers).forEach(timer => clearInterval(timer));
             followCheckTimers = {};
+            aiRefreshTimers = {};
             
             stopAutoRefresh();
             stopBetChecker();
@@ -349,7 +570,7 @@
 
         function scheduleNextRefresh() {
             const now = Date.now();
-            const intervalMs = CONFIG.state.refreshInterval * 1000;
+            const intervalMs = (CONFIG.state.refreshInterval * 1000) + CONFIG.state.refreshIntervalMs;
             const nextRefreshTime = refreshCycleStartTime + intervalMs;
             const delay = Math.max(0, nextRefreshTime - now);
             
@@ -358,6 +579,14 @@
                     loadBetItems();
                 }
             }, delay);
+            
+            const nextTime = new Date(nextRefreshTime);
+            Logger.info(`下一次数据刷新时间: ${nextTime.toLocaleTimeString("zh-CN", {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                fractionalSecondDigits: 3
+            })}`, true);
         }
 
         function stopAutoRefresh() {
@@ -386,7 +615,8 @@
             isPageVisible = document.visibilityState === 'visible';
             
             if (isPageVisible && !wasVisible && isServiceRunning) {
-                Logger.info("页面恢复可见");
+                Logger.info("页面恢复可见，同步数据...", true);
+                loadBetItems();
                 startAutoRefresh();
                 if (!betCheckTimer) {
                     startBetChecker();
@@ -397,18 +627,14 @@
         // 刷新周期控制
         function resetRefreshCycle() {
             refreshCycleStartTime = Date.now();
+            if (isServiceRunning && CONFIG.state.autoRefresh) {
+                scheduleNextRefresh();
+            }
         }
 
         // 参数转换工具
-        function convertToSeconds(hours, minutes, seconds) {
-            return (hours * 3600) + (minutes * 60) + seconds;
-        }
-
-        function convertToHMS(totalSeconds) {
-            const hours = Math.floor(totalSeconds / 3600);
-            const minutes = Math.floor((totalSeconds % 3600) / 60);
-            const seconds = totalSeconds % 60;
-            return { hours, minutes, seconds };
+        function convertToMilliseconds(hours, minutes, seconds, milliseconds) {
+            return (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + milliseconds;
         }
 
         // 参数设置
@@ -416,19 +642,34 @@
             const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
             const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
             const seconds = parseInt(document.getElementById("refreshSecondsInput").value) || 0;
+            const milliseconds = parseInt(document.getElementById("refreshMillisecondsInput").value) || 0;
             
-            const totalSeconds = convertToSeconds(hours, minutes, seconds);
+            const totalMs = convertToMilliseconds(hours, minutes, seconds, milliseconds);
+            const totalSeconds = Math.floor(totalMs / 1000);
+            CONFIG.state.refreshInterval = totalSeconds;
+            CONFIG.state.refreshIntervalMs = totalMs % 1000;
             
-            if (totalSeconds >= 5 && totalSeconds <= 86400) {
-                CONFIG.state.refreshInterval = totalSeconds;
-                Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒`);
-                
-                if (isServiceRunning) {
-                    resetRefreshCycle();
-                    startAutoRefresh();
-                }
-            } else {
-                Logger.warning("无效的刷新间隔值（必须为5秒-86400秒之间）");
+            Logger.info(`已设置数据刷新间隔为 ${hours}小时${minutes}分${seconds}秒${milliseconds}毫秒`, true);
+            
+            if (isServiceRunning) {
+                resetRefreshCycle();
+                startAutoRefresh();
+            }
+        }
+
+        function setFollowCheckInterval() {
+            const seconds = parseInt(document.getElementById("followCheckSecInput").value) || 0;
+            const milliseconds = parseInt(document.getElementById("followCheckIntervalInput").value) || 0;
+            
+            CONFIG.state.followCheckInterval = (seconds * 1000) + milliseconds;
+            CONFIG.state.followCheckIntervalSec = seconds;
+            
+            Logger.info(`已设置跟随检查间隔为 ${seconds}秒${milliseconds}毫秒`, true);
+            
+            if (isServiceRunning && CONFIG.state.betStrategy === "follow") {
+                CONFIG.state.availableBets.forEach(bet => {
+                    startFollowingCheck(bet.id);
+                });
             }
         }
 
@@ -443,7 +684,8 @@
                 CONFIG.state.checkInterval = Math.max(0.1, parseFloat(document.getElementById("checkIntervalInput").value) || 2);
                 CONFIG.state.oddsThreshold = Math.max(1.0, parseFloat(document.getElementById("oddsThresholdInput").value) || 1.5);
                 CONFIG.state.slippageTolerance = Math.max(0.01, parseFloat(document.getElementById("slippageToleranceInput").value) || 0.05);
-                CONFIG.state.followCheckInterval = Math.max(100, parseInt(document.getElementById("followCheckIntervalInput").value) || 500);
+                CONFIG.state.autoBetTriggerSec = Math.max(10, parseInt(document.getElementById("autoBetTriggerSecInput").value) || 30);
+                CONFIG.state.aiRefreshInterval = Math.max(100, parseInt(document.getElementById("aiRefreshIntervalInput").value) || 1000);
                 
                 Logger.info(`参数已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s`);
                 
@@ -452,9 +694,14 @@
                     renderBetTable();
                     renderPendingBetsTable();
                     
+                    // 重启对应定时器
                     if (CONFIG.state.betStrategy === "follow") {
                         CONFIG.state.availableBets.forEach(bet => {
                             startFollowingCheck(bet.id);
+                        });
+                    } else {
+                        CONFIG.state.availableBets.forEach(bet => {
+                            startAIRefresh(bet.id);
                         });
                     }
                 }
@@ -495,7 +742,7 @@
             if (CONFIG.state.availableBets.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                        <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
                                 <span>无可用投注项目</span>
@@ -512,15 +759,13 @@
                     <th class="border p-3 text-left font-semibold">描述</th>
                     <th class="border p-3 text-left font-semibold">选项 (赔率)</th>
                     <th class="border p-3 text-left font-semibold">最高赔率</th>
+                    <th class="border p-3 text-left font-semibold">AI胜率/比分</th>
                     <th class="border p-3 text-left font-semibold">结束时间</th>
                 </tr>
             `;
             
             CONFIG.state.availableBets.forEach(item => {
-                const highestOption = item.optionsList && item.optionsList.length > 0 
-                    ? item.optionsList.reduce((max, opt) => 
-                        parseFloat(opt.odds) > parseFloat(max.odds) ? opt : max, item.optionsList[0])
-                    : null;
+                const highestOption = getHighestOddsOption(item);
                 
                 let optionsHtml = "";
                 if (item.optionsList && item.optionsList.length > 0) {
@@ -534,11 +779,20 @@
                     optionsHtml = "无选项";
                 }
                 
+                // AI测算显示（非跟随模式）
+                const aiInfo = CONFIG.state.betStrategy !== "follow" 
+                    ? `<div class="text-sm">
+                        胜率: ${item.aiWinRate || "分析中"}%<br>
+                        比分: ${item.aiScore || "分析中"}
+                       </div>`
+                    : "跟随模式无需AI测算";
+                
                 html += `<tr class="hover:bg-gray-50 transition-colors">
                     <td class="border p-3">${item.id}</td>
                     <td class="border p-3">${item.heading || '无描述'}</td>
                     <td class="border p-3">${optionsHtml}</td>
                     <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
+                    <td class="border p-3 ${CONFIG.state.betStrategy === "follow" ? 'text-gray-500' : 'text-purple'}">${aiInfo}</td>
                     <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
                 </tr>`;
             });
@@ -553,7 +807,7 @@
             if (pendingBets.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                        <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
                                 <span>暂无待投注项目</span>
@@ -570,6 +824,7 @@
                     <th class="border p-3 text-left font-semibold">描述</th>
                     <th class="border p-3 text-left font-semibold">投注对象</th>
                     <th class="border p-3 text-left font-semibold">下注时间</th>
+                    <th class="border p-3 text-left font-semibold">金额</th>
                     <th class="border p-3 text-left font-semibold">状态</th>
                 </tr>
             `;
@@ -591,11 +846,17 @@
                     statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
                 }
                 
+                // 跟随模式标记
+                const strategyBadge = bet.strategy === "follow" 
+                    ? `<span class="ml-2 text-xs bg-purple/10 text-purple px-1.5 rounded">跟随</span>` 
+                    : "";
+                
                 html += `<tr class="hover:bg-gray-50 transition-colors">
                     <td class="border p-3">${bet.id}</td>
                     <td class="border p-3">${bet.heading || '无描述'}</td>
-                    <td class="border p-3 font-bold text-success">${bet.highestOddsTeam}</td>
+                    <td class="border p-3 font-bold text-success">${bet.highestOddsTeam} (${bet.highestOdds})${strategyBadge}</td>
                     <td class="border p-3">${bet.betTime.toLocaleString()}</td>
+                    <td class="border p-3">${bet.betAmount}</td>
                     <td class="border p-3 ${statusClass}">${statusBadge}</td>
                 </tr>`;
             });
@@ -615,19 +876,34 @@
             document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
             document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
             document.getElementById("slippageToleranceInput").value = CONFIG.state.slippageTolerance;
-            document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
+            document.getElementById("autoBetTriggerSecInput").value = CONFIG.state.autoBetTriggerSec;
+            document.getElementById("aiRefreshIntervalInput").value = CONFIG.state.aiRefreshInterval;
             
-            const hms = convertToHMS(CONFIG.state.refreshInterval);
-            document.getElementById("refreshHoursInput").value = hms.hours;
-            document.getElementById("refreshMinutesInput").value = hms.minutes;
-            document.getElementById("refreshSecondsInput").value = hms.seconds;
+            // 初始化刷新间隔（秒+毫秒）
+            const totalMs = CONFIG.state.refreshInterval * 1000 + CONFIG.state.refreshIntervalMs;
+            const hours = Math.floor(totalMs / 3600000);
+            const minutes = Math.floor((totalMs % 3600000) / 60000);
+            const seconds = Math.floor((totalMs % 60000) / 1000);
+            const milliseconds = totalMs % 1000;
+            document.getElementById("refreshHoursInput").value = hours;
+            document.getElementById("refreshMinutesInput").value = minutes;
+            document.getElementById("refreshSecondsInput").value = seconds;
+            document.getElementById("refreshMillisecondsInput").value = milliseconds;
+            
+            // 初始化跟随检查间隔（秒+毫秒）
+            const followTotalMs = CONFIG.state.followCheckInterval;
+            const followSeconds = Math.floor(followTotalMs / 1000);
+            const followMilliseconds = followTotalMs % 1000;
+            document.getElementById("followCheckSecInput").value = followSeconds;
+            document.getElementById("followCheckIntervalInput").value = followMilliseconds;
             
             // 绑定事件
             document.getElementById("startServiceBtn").addEventListener("click", startService);
             document.getElementById("stopServiceBtn").addEventListener("click", stopService);
             document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
             document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
-            document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
+            document.getElementById("setRefreshIntervalBtn").addEventListener("click", setRefreshInterval);
+            document.getElementById("setFollowCheckIntervalBtn").addEventListener("click", setFollowCheckInterval);
             document.getElementById("manualRefreshBtn").addEventListener("click", loadBetItems);
             document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
             
@@ -644,7 +920,7 @@
     <div class="max-w-7xl mx-auto">
         <header class="mb-8">
             <h1 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold text-primary mb-2">M-Team 投注系统</h1>
-            <p class="text-gray-500">自动投注管理平台</p>
+            <p class="text-gray-500">智能自动投注管理平台</p>
         </header>
         
         <!-- 服务控制区域 -->
@@ -714,7 +990,7 @@
                         <option value="larger">押大</option>
                         <option value="smaller">押小</option>
                         <option value="follow">跟随用户</option>
-                        <option value="higher_odds">高赔率自动下注</option>
+                        <option value="higher_odds">高赔率自动下注（AI测算）</option>
                     </select>
                 </div>
                 <div>
@@ -722,8 +998,12 @@
                     <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔(毫秒)</label>
-                    <input type="number" id="followCheckIntervalInput" min="100" max="3000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔</label>
+                    <div class="flex gap-2">
+                        <input type="number" id="followCheckSecInput" min="0" max="30" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="followCheckIntervalInput" min="0" max="999" placeholder="毫秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    </div>
+                    <button id="setFollowCheckIntervalBtn" class="mt-2 text-sm text-primary hover:underline">设置间隔</button>
                 </div>
                 <div>
                     <label class="block text-sm text-gray-600 mb-1.5">数据刷新间隔</label>
@@ -731,23 +1011,22 @@
                         <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                         <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                         <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="refreshMillisecondsInput" min="0" max="999" placeholder="毫秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
+                    <button id="setRefreshIntervalBtn" class="mt-2 text-sm text-primary hover:underline">设置间隔</button>
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">赔率阈值（高赔率策略）</label>
-                    <input type="number" id="oddsThresholdInput" min="1.0" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">AI自动下注触发时间(秒)</label>
+                    <input type="number" id="autoBetTriggerSecInput" min="10" max="60" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">滑点容忍度（0.05=5%）</label>
-                    <input type="number" id="slippageToleranceInput" min="0.01" max="0.5" step="0.01" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">AI后台刷新间隔(毫秒)</label>
+                    <input type="number" id="aiRefreshIntervalInput" min="100" max="5000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
             </div>
             <div class="text-right">
                 <button id="saveParamsBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
                     保存参数
-                </button>
-                <button id="setIntervalBtn" class="bg-gray-600 text-white px-5 py-2.5 rounded-lg ml-2 hover:bg-gray-700 transition-colors">
-                    设置刷新间隔
                 </button>
             </div>
         </div>
@@ -765,7 +1044,7 @@
             <div class="overflow-x-auto">
                 <table id="betItemsTable" class="min-w-full border-collapse">
                     <tr>
-                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                        <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
                                 <span>请启动服务或手动刷新</span>
@@ -784,7 +1063,7 @@
             <div class="overflow-x-auto">
                 <table id="pendingBetsTable" class="min-w-full border-collapse">
                     <tr>
-                        <td colspan="5" class="border p-8 text-center text-gray-500">
+                        <td colspan="6" class="border p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
                                 <span>暂无待投注项目</span>
@@ -792,3 +1071,18 @@
                         </td>
                     </tr>
                 </table>
+            </div>
+        </div>
+        
+        <!-- 日志区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 hover-lift border-l-4 border-gray-500">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-history text-gray-500 mr-2"></i>操作日志
+            </h2>
+            <div id="logPanel" class="h-64 overflow-y-auto p-3 bg-gray-50 rounded-lg text-sm border border-gray-200">
+                系统启动中...
+            </div>
+        </div>
+    </div>
+</body>
+</html>

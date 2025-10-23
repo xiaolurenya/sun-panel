@@ -1798,44 +1798,92 @@
             return Math.abs(hash);
         };
 
-        // 页面初始化
-        document.addEventListener("DOMContentLoaded", () => {
-            document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
-            document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
-            document.getElementById("toleranceSecondsInput").value = CONFIG.state.toleranceSeconds;
-            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
-            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
-            document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
-            document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
-            document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
-            document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
-            document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
-            document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
-            
-            // 初始化定时任务配置
-            document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
-            document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
-            document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
-            
-            const hms = convertToHMS(CONFIG.state.refreshInterval);
-            document.getElementById("refreshHoursInput").value = hms.hours;
-            document.getElementById("refreshMinutesInput").value = hms.minutes;
-            document.getElementById("refreshSecondsInput").value = hms.seconds;
-            
-            const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
-            document.getElementById("refreshIntervalDisplay").textContent = 
-                `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
-            
-            // 初始化刷新周期开始时间
-            refreshCycleStartTime = Date.now();
-            
-            document.getElementById("betStrategySelect").addEventListener("change", function() {
-                CONFIG.state.betStrategy = this.value;
-                Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
-                if (isServiceRunning) {
-                    saveParameters();
-                }
-            });
+       // 页面初始化
+document.addEventListener("DOMContentLoaded", () => {
+    // 初始化输入框值（原有代码不变）
+    document.getElementById("targetUserIdInput").value = CONFIG        CONFIG.state.targetUserId;
+    document.getElementById("advanceSecondsInput").value =
+        CONFIG.state.advanceSeconds;
+    document.getElementById("toleranceSeconds)sInput").value =
+        CONFIG.state.toleranceSeconds;
+    document.getElementById("amountRangeInput").value =
+        CONFIG.state.amountRange;
+    document.getElementById("baseAmountInput").value =
+        CONFIG.state.baseAmount;
+    document.getElementById("betStrategySelect").value =
+        CONFIG.state.betStrategy;
+    document.getElementById("checkIntervalInput").value =
+        CONFIG.state.checkInterval;
+    document.getElementById("oddsThresholdInput").value =
+        CONFIG.state.oddsThreshold;
+    document.getElementById("pendingFilterSelect").value =
+        CONFIG.state.pendingFilter;
+    document.getElementById("followCheckIntervalInput").value =
+        CONFIG.state.followCheckInterval;
+    document.getElementById("aiPredictionEnabledCheckbox").checked =
+        CONFIG.state.aiPredictionEnabled;
+
+    // 初始化定时任务配置（原有代码不变）
+    document.getElementById("scheduleEnabledCheckbox").checked =
+        CONFIG.state.scheduleEnabled;
+    document.getElementById("scheduleStartTimeInput").value =
+        CONFIG.state.scheduleStartTime;
+    document.getElementById("scheduleStopTimeInput").value =
+        CONFIG.state.scheduleStopTime;
+
+    // 初始化刷新时间显示（原有代码不变）
+    const hms = convertToHMS(CONFIG.state.refreshInterval);
+    document.getElementById("refreshHoursInput").value = hms.hours;
+    document.getElementById("refreshMinutesInput").value = hms.minutes;
+    document.getElementById("refreshSecondsInput").value = hms.seconds;
+
+    const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
+    document.getElementById("refreshIntervalDisplay").textContent =
+        `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
+
+    // 初始化刷新周期开始时间（原有代码不变）
+    refreshCycleStartTime = Date.now();
+
+    // 【新增：定时启停勾选框的自动保存】
+    document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
+        CONFIG.state.scheduleEnabled = this.checked; // 更新配置
+        saveParameters(); // 自动保存
+        if (this.checked) {
+            setupSchedule(); // 如果勾选了，启动定时任务
+        } else {
+            clearSchedule(); // 如果取消勾选，清除定时任务
+        }
+    });
+
+    // 【新增：定时启动时间输入框的自动保存】
+    document.getElementById("scheduleStartTimeInput").addEventListener("change", function() {
+        CONFIG.state.scheduleStartTime = this.value; // 更新配置
+        saveParameters(); // 自动保存
+        if (CONFIG.state.scheduleEnabled) {
+            setupSchedule(); // 如果定时已启用，重新设置
+        }
+    });
+
+    // 【新增：定时停止时间输入框的自动保存】
+    document.getElementById("scheduleStopTimeInput").addEventListener("change", function() {
+        CONFIG.state.scheduleStopTime = this.value; // 更新配置
+        saveParameters(); // 自动保存
+        if (CONFIG.state.scheduleEnabled) {
+            setupSchedule(); // 如果定时已启用，重新设置
+        }
+    });
+
+    // 原有投注策略选择事件（保持不变）
+    document.getElementById("betStrategySelect").addEventListener("change", function() {
+        CONFIG.state.betStrategy = this.value;
+        Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
+        if (isServiceRunning) {
+            saveParameters();
+        }
+    });
+
+    // 其他原有事件监听（保持不变）
+});
             
             // 定时任务开关事件
             document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {

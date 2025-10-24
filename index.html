@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M-Team 馒头菠菜</title>
+    <title>M-Team 自动投注系统</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
@@ -62,44 +62,63 @@
                 color: #7B61FF;
                 font-weight: bold;
             }
+            .scrollbar-thin {
+                scrollbar-width: thin;
+            }
+            .scrollbar-thin::-webkit-scrollbar {
+                width: 4px;
+                height: 4px;
+            }
+            .scrollbar-thin::-webkit-scrollbar-thumb {
+                background-color: rgba(156, 163, 175, 0.5);
+                border-radius: 2px;
+            }
         }
     </style>
 </head>
-<body class="bg-gray-50 font-sans">
+<body class="bg-gray-50 font-sans text-gray-800">
     <div class="container mx-auto px-4 py-6 max-w-7xl">
-        <header class="mb-8">
-            <div class="flex justify-between items-center mb-4">
-                <h1 class="text-2xl font-bold text-dark flex items-center">
-                    <i class="fa fa-line-chart text-primary mr-2"></i>
-                    M-Team 自动投注系统
-                </h1>
-                <div class="flex items-center space-x-4">
-                    <div class="flex items-center">
-                        <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
-                        <span id="serviceStatusText">服务未运行</span>
+        <!-- 顶部导航栏 -->
+        <header class="mb-6">
+            <div class="bg-white rounded-xl card-shadow p-4 mb-6">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <h1 class="text-2xl font-bold text-dark flex items-center">
+                        <i class="fa fa-line-chart text-primary mr-2"></i>
+                        M-Team 自动投注系统
+                    </h1>
+                    
+                    <div class="flex items-center space-x-4 w-full md:w-auto">
+                        <div class="flex items-center bg-gray-100 px-3 py-1.5 rounded-lg">
+                            <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
+                            <span id="serviceStatusText" class="text-sm font-medium">服务未运行</span>
+                        </div>
+                        
+                        <div class="flex gap-2 flex-1 md:flex-none">
+                            <button id="startServiceBtn" onclick="startService()" class="flex-1 bg-success hover:bg-success/90 text-white px-4 py-2 rounded-lg transition hover-lift flex items-center justify-center">
+                                <i class="fa fa-play mr-2"></i> 启动服务
+                            </button>
+                            <button id="stopServiceBtn" onclick="stopService()" class="flex-1 bg-danger hover:bg-danger/90 text-white px-4 py-2 rounded-lg transition hover-lift opacity-50 cursor-not-allowed" disabled>
+                                <i class="fa fa-stop mr-2"></i> 停止服务
+                            </button>
+                        </div>
                     </div>
-                    <button id="startServiceBtn" onclick="startService()" class="bg-success hover:bg-success/90 text-white px-4 py-2 rounded-md transition hover-lift">
-                        启动服务
-                    </button>
-                    <button id="stopServiceBtn" onclick="stopService()" class="bg-danger hover:bg-danger/90 text-white px-4 py-2 rounded-md transition hover-lift opacity-50 cursor-not-allowed" disabled>
-                        停止服务
-                    </button>
                 </div>
-            </div>
-            
-            <div class="bg-white p-4 rounded-lg card-shadow">
-                <div class="flex flex-wrap gap-4 items-center">
-                    <div class="flex items-center">
+                
+                <div class="flex flex-wrap gap-3 pt-2 text-sm">
+                    <div class="flex items-center bg-gray-50 px-3 py-1.5 rounded-lg">
                         <span class="text-gray-600 mr-2">刷新间隔:</span>
                         <span id="refreshIntervalDisplay" class="font-mono text-primary">00:00:30.000</span>
                     </div>
-                    <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="text-primary hover:text-primary/80 text-sm flex items-center">
+                    
+                    <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" class="text-primary hover:text-primary/80 flex items-center px-3 py-1.5 rounded-lg hover:bg-primary/5 transition">
                         <i class="fa fa-refresh mr-1"></i> 关闭自动刷新
                     </button>
-                    <button onclick="manualRefresh()" class="text-primary hover:text-primary/80 text-sm flex items-center">
+                    
+                    <button onclick="manualRefresh()" class="text-primary hover:text-primary/80 flex items-center px-3 py-1.5 rounded-lg hover:bg-primary/5 transition">
                         <i class="fa fa-sync mr-1"></i> 手动刷新
                     </button>
-                    <button onclick="toggleLogModal()" class="text-primary hover:text-primary/80 text-sm flex items-center ml-auto">
+                    
+                    <button onclick="toggleLogModal()" class="text-primary hover:text-primary/80 flex items-center px-3 py-1.5 rounded-lg hover:bg-primary/5 transition ml-auto">
                         <i class="fa fa-list-alt mr-1"></i> 查看日志
                     </button>
                 </div>
@@ -107,63 +126,90 @@
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            <div class="lg:col-span-2">
-                <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-list-ol text-primary mr-2"></i> 可投注项目
-                    </h2>
-                    <div class="overflow-x-auto">
-                        <table id="betItemsTable" class="min-w-full divide-y divide-gray-200">
-                            <tr>
-                                <td colspan="7" class="border p-8 text-center text-gray-500">
-                                    <div class="flex flex-col items-center">
-                                        <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
-                                        <span>请启动服务加载数据</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        </table>
+            <!-- 主内容区 -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- 可投注项目 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-list-ol text-primary mr-2"></i> 可投注项目
+                            <span id="availableBetsCount" class="ml-2 text-sm font-normal text-gray-500">0 个项目</span>
+                        </h2>
+                    </div>
+                    <div class="p-4">
+                        <div class="overflow-x-auto scrollbar-thin">
+                            <table id="betItemsTable" class="min-w-full divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="7" class="border border-gray-200 p-8 text-center text-gray-500">
+                                        <div class="flex flex-col items-center">
+                                            <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                            <span>请启动服务加载数据</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
-                <div class="bg-white rounded-lg card-shadow p-4">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-clock-o text-primary mr-2"></i> 待投注项目
-                    </h2>
-                    <div class="overflow-x-auto">
-                        <table id="pendingBetsTable" class="min-w-full divide-y divide-gray-200">
-                            <tr>
-                                <td colspan="7" class="border p-8 text-center text-gray-500">
-                                    <div class="flex flex-col items-center">
-                                        <i class="fa fa-hourglass-o text-3xl mb-2 text-gray-300"></i>
-                                        <span>暂无待投注项目</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        </table>
+                <!-- 待投注项目 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-clock-o text-primary mr-2"></i> 待投注项目
+                            <span id="pendingBetsCount" class="ml-2 text-sm font-normal text-gray-500">0 个项目</span>
+                        </h2>
                     </div>
+                    <div class="p-4">
+                        <div class="overflow-x-auto scrollbar-thin">
+                            <table id="pendingBetsTable" class="min-w-full divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="7" class="border border-gray-200 p-8 text-center text-gray-500">
+                                        <div class="flex flex-col items-center">
+                                            <i class="fa fa-hourglass-o text-3xl mb-2 text-gray-300"></i>
+                                            <span>暂无待投注项目</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作日志 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-history text-primary mr-2"></i> 操作日志
+                        </h2>
+                    </div>
+                    <div id="logPanel" class="h-48 overflow-y-auto p-4 border-t border-gray-100 text-sm scrollbar-thin"></div>
                 </div>
             </div>
 
-            <div class="lg:col-span-1">
-                <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-cog text-primary mr-2"></i> 基本配置
-                    </h2>
-                    <div class="space-y-4">
+            <!-- 配置面板 -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- 基本配置 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-cog text-primary mr-2"></i> 基本配置
+                        </h2>
+                    </div>
+                    <div class="p-5 space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                            <input type="text" id="apiKeyInput" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50" placeholder="输入API Key">
+                            <input type="text" id="apiKeyInput" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition" placeholder="输入API Key">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">目标用户ID (跟随模式)</label>
-                            <input type="text" id="targetUserIdInput" value="205809" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="text" id="targetUserIdInput" value="205809" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">投注策略</label>
-                            <select id="betStrategySelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <select id="betStrategySelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                                 <option value="higher_odds">最高赔率优先</option>
                                 <option value="follow">跟随目标用户</option>
                                 <option value="larger">押大</option>
@@ -173,114 +219,126 @@
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">提前下注时间 (秒)</label>
-                            <input type="number" id="advanceSecondsInput" value="3" min="0" max="60" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="advanceSecondsInput" value="3" min="0" max="60" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">容忍时间 (秒)</label>
-                            <input type="number" id="toleranceSecondsInput" value="10" min="0" max="300" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="toleranceSecondsInput" value="10" min="0" max="300" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-money text-primary mr-2"></i> 金额设置
-                    </h2>
-                    <div class="space-y-4">
+                <!-- 金额设置 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-money text-primary mr-2"></i> 金额设置
+                        </h2>
+                    </div>
+                    <div class="p-5 space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">基础投注金额</label>
-                            <input type="number" id="baseAmountInput" value="10000" min="100" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="baseAmountInput" value="10000" min="100" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">随机波动范围</label>
-                            <input type="number" id="amountRangeInput" value="20000" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="amountRangeInput" value="20000" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-refresh text-primary mr-2"></i> 刷新设置
-                    </h2>
-                    <div class="space-y-4">
+                <!-- 刷新设置 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-refresh text-primary mr-2"></i> 刷新设置
+                        </h2>
+                    </div>
+                    <div class="p-5 space-y-4">
                         <div class="grid grid-cols-3 gap-2">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">时</label>
-                                <input type="number" id="refreshHoursInput" value="0" min="0" max="23" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                <input type="number" id="refreshHoursInput" value="0" min="0" max="23" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">分</label>
-                                <input type="number" id="refreshMinutesInput" value="0" min="0" max="59" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                <input type="number" id="refreshMinutesInput" value="0" min="0" max="59" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">秒</label>
-                                <input type="number" id="refreshSecondsInput" value="30" min="5" max="60" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                                <input type="number" id="refreshSecondsInput" value="30" min="5" max="60" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                             </div>
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">检查间隔 (秒)</label>
-                            <input type="number" id="checkIntervalInput" value="2" min="0.1" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="checkIntervalInput" value="2" min="0.1" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                         
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">跟随检查间隔 (毫秒)</label>
-                            <input type="number" id="followCheckIntervalInput" value="500" min="100" max="3000" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <input type="number" id="followCheckIntervalInput" value="500" min="100" max="3000" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-calendar-check-o text-primary mr-2"></i> 定时任务
-                    </h2>
-                    <div class="space-y-4">
+                <!-- 定时任务 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-calendar-check-o text-primary mr-2"></i> 定时任务
+                        </h2>
+                    </div>
+                    <div class="p-5 space-y-4">
                         <div>
                             <label class="flex items-center">
-                                <input type="checkbox" id="schedule1EnabledCheckbox" class="form-checkbox h-5 w-5 text-primary">
+                                <input type="checkbox" id="schedule1EnabledCheckbox" class="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary/50">
                                 <span class="ml-2 text-sm text-gray-700">启用第一组定时任务</span>
                             </label>
                             <div class="mt-2 grid grid-cols-2 gap-2 pl-7">
                                 <div>
                                     <label class="block text-xs text-gray-500 mb-1">开始时间</label>
-                                    <input type="time" id="schedule1StartTimeInput" value="09:00" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+                                    <input type="time" id="schedule1StartTimeInput" value="09:00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition text-sm">
                                 </div>
                                 <div>
                                     <label class="block text-xs text-gray-500 mb-1">结束时间</label>
-                                    <input type="time" id="schedule1StopTimeInput" value="23:00" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+                                    <input type="time" id="schedule1StopTimeInput" value="23:00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition text-sm">
                                 </div>
                             </div>
                         </div>
                         
                         <div>
                             <label class="flex items-center">
-                                <input type="checkbox" id="schedule2EnabledCheckbox" class="form-checkbox h-5 w-5 text-primary">
+                                <input type="checkbox" id="schedule2EnabledCheckbox" class="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary/50">
                                 <span class="ml-2 text-sm text-gray-700">启用第二组定时任务</span>
                             </label>
                             <div class="mt-2 grid grid-cols-2 gap-2 pl-7">
                                 <div>
                                     <label class="block text-xs text-gray-500 mb-1">开始时间</label>
-                                    <input type="time" id="schedule2StartTimeInput" value="00:00" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+                                    <input type="time" id="schedule2StartTimeInput" value="00:00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition text-sm">
                                 </div>
                                 <div>
                                     <label class="block text-xs text-gray-500 mb-1">结束时间</label>
-                                    <input type="time" id="schedule2StopTimeInput" value="06:00" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+                                    <input type="time" id="schedule2StopTimeInput" value="06:00" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition text-sm">
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white rounded-lg card-shadow p-4">
-                    <h2 class="text-lg font-semibold mb-4 flex items-center">
-                        <i class="fa fa-filter text-primary mr-2"></i> 其他设置
-                    </h2>
-                    <div class="space-y-4">
+                <!-- 其他设置 -->
+                <div class="bg-white rounded-xl card-shadow overflow-hidden transition-all duration-300 hover-lift">
+                    <div class="bg-gray-50 px-5 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-filter text-primary mr-2"></i> 其他设置
+                        </h2>
+                    </div>
+                    <div class="p-5 space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">待投注筛选</label>
-                            <select id="pendingFilterSelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary/50">
+                            <select id="pendingFilterSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
                                 <option value="all">全部</option>
                                 <option value="highest_odds">最高赔率</option>
                                 <option value="highest_amount">最高金额</option>
@@ -290,49 +348,42 @@
                         
                         <div>
                             <label class="flex items-center">
-                                <input type="checkbox" id="detailedLogModeCheckbox" class="form-checkbox h-5 w-5 text-primary">
+                                <input type="checkbox" id="detailedLogModeCheckbox" class="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary/50">
                                 <span class="ml-2 text-sm text-gray-700">详细日志模式</span>
                             </label>
                         </div>
                         
                         <div>
                             <label class="flex items-center">
-                                <input type="checkbox" id="aiPredictionEnabledCheckbox" checked class="form-checkbox h-5 w-5 text-primary">
+                                <input type="checkbox" id="aiPredictionEnabledCheckbox" checked class="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary/50">
                                 <span class="ml-2 text-sm text-gray-700">启用AI预测</span>
                             </label>
                         </div>
                         
-                        <button onclick="saveParameters()" class="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-md transition hover-lift">
+                        <button onclick="saveParameters()" class="w-full bg-primary hover:bg-primary/90 text-white py-2.5 rounded-lg transition hover-lift">
                             保存配置
                         </button>
                     </div>
                 </div>
             </div>
         </div>
-
-        <div class="bg-white rounded-lg card-shadow p-4 mb-6">
-            <h2 class="text-lg font-semibold mb-4 flex items-center">
-                <i class="fa fa-history text-primary mr-2"></i> 操作日志
-            </h2>
-            <div id="logPanel" class="h-40 overflow-y-auto p-2 border border-gray-200 rounded-md text-sm"></div>
-        </div>
     </div>
 
     <!-- 日志弹窗 -->
     <div id="logModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 p-4">
-        <div class="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div class="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-xl">
             <div class="p-4 border-b flex justify-between items-center">
                 <h3 class="font-semibold text-lg">详细日志</h3>
                 <div class="flex space-x-2">
-                    <button onclick="Logger.clear()" class="text-sm text-gray-600 hover:text-gray-900">
+                    <button onclick="Logger.clear()" class="text-sm text-gray-600 hover:text-gray-900 px-3 py-1 rounded hover:bg-gray-100 transition">
                         <i class="fa fa-trash mr-1"></i> 清空
                     </button>
-                    <button onclick="toggleLogModal()" class="text-gray-600 hover:text-gray-900">
+                    <button onclick="toggleLogModal()" class="text-gray-600 hover:text-gray-900 p-1 rounded-full hover:bg-gray-100 transition">
                         <i class="fa fa-times"></i>
                     </button>
                 </div>
             </div>
-            <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 text-sm"></div>
+            <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 text-sm scrollbar-thin"></div>
         </div>
     </div>
 
@@ -430,7 +481,7 @@
                 const mainPanel = document.getElementById('logPanel');
                 if (mainPanel) {
                     mainPanel.innerHTML = this.logs.map(log => 
-                        `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
+                        `<div class="py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
                     mainPanel.scrollTop = mainPanel.scrollHeight;
                 }
@@ -438,7 +489,7 @@
                 const modalPanel = document.getElementById('logModalPanel');
                 if (modalPanel) {
                     modalPanel.innerHTML = this.logs.map(log => 
-                        `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
+                        `<div class="py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
                     modalPanel.scrollTop = modalPanel.scrollHeight;
                 }
@@ -557,6 +608,8 @@
                 GlobalInfo.available_bets = CONFIG.state.availableBets;
                 
                 Logger.info(`找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
+                document.getElementById("availableBetsCount").textContent = `${CONFIG.state.availableBets.length} 个项目`;
+                
                 CONFIG.state.availableBets.forEach((betitem, idx) => {
                     Logger.info(`[ ${idx + 1} / ${CONFIG.state.availableBets.length} ] 项目id: ${betitem.id} 结束时间： ${betitem.endtime}`);
                     Logger.info(`${betitem.heading}, ${betitem.undertext || ''}`);
@@ -592,6 +645,7 @@
                     GlobalInfo.available_bets = CONFIG.state.availableBets;
                     
                     Logger.info(`从备用服务器找到可下注项目（${CONFIG.state.availableBets.length} 个）`);
+                    document.getElementById("availableBetsCount").textContent = `${CONFIG.state.availableBets.length} 个项目`;
                     
                     await flushConfig();
                     processPendingBets(true);
@@ -749,6 +803,7 @@
             newPendingBets = [...newPendingBets, ...selectedBets];
             newPendingBets.sort((a, b) => a.betTime - b.betTime);
             pendingBets = newPendingBets;
+            document.getElementById("pendingBetsCount").textContent = `${pendingBets.length} 个项目`;
             renderPendingBetsTable();
         }
 
@@ -898,13 +953,13 @@
         }
 
         // 执行跟随投注
-        async function placeFollowBet(betItem, optionId) {
+        async function placeFollowBet(followBet, optionId) {
             updateLastActivity();
             try {
-                Logger.info(`开始跟随投注项目 #${betItem.id}，选项: ${betItem.highestOddsTeam}, 金额: ${betItem.betAmount}`);
+                Logger.info(`开始跟随投注项目 #${followBet.id}，选项: ${followBet.highestOddsTeam}, 金额: ${followBet.betAmount}`);
                 
                 // 检查选项是否存在
-                const option = betItem.optionsList.find(opt => opt.id === optionId);
+                const option = followBet.optionsList.find(opt => opt.id === optionId);
                 if (!option) {
                     Logger.error(`跟随投注失败: 选项 ${optionId} 不存在`);
                     return false;
@@ -913,28 +968,26 @@
                 // 执行投注
                 const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
                     .replace('{optId}', optionId)
-                    .replace('{bonus}', betItem.betAmount)}`;
+                    .replace('{bonus}', followBet.betAmount)}`;
                 
                 const result = await request(url);
                 
                 // 修复1: 更全面的成功判断逻辑
-                if (result.code !== 0) {
-                    // 特殊处理: 某些API可能返回code=1但实际成功的情况
-                    if (result.code === 1 && result.msg && result.msg.includes("成功")) {
-                        Logger.info(`跟随投注成功(特殊响应): 项目 #${betItem.id}，选项 ${betItem.highestOddsTeam}，金额 ${betItem.betAmount}`);
-                        return true;
-                    }
-                    
+                const isSuccess = result.code === 0 || 
+                                  (result.code === 1 && result.msg && result.msg.includes("成功")) ||
+                                  (result.msg && result.msg.includes("成功"));
+                
+                if (!isSuccess) {
                     Logger.error(`跟随投注失败: ${result.msg || '未知错误'}`);
                     return false;
                 }
                 
-                Logger.info(`跟随投注成功: 项目 #${betItem.id}，选项 ${betItem.highestOddsTeam}，金额 ${betItem.betAmount}`);
+                Logger.info(`跟随投注成功: 项目 #${followBet.id}，选项 ${followBet.highestOddsTeam}，金额 ${followBet.betAmount}`);
                 
-                if (!GlobalInfo.bet_mask[betItem.id]) {
-                    GlobalInfo.bet_mask[betItem.id] = [];
+                if (!GlobalInfo.bet_mask[followBet.id]) {
+                    GlobalInfo.bet_mask[followBet.id] = [];
                 }
-                GlobalInfo.bet_mask[betItem.id].push(optionId);
+                GlobalInfo.bet_mask[followBet.id].push(optionId);
                 
                 return true;
             } catch (e) {
@@ -942,28 +995,26 @@
                 try {
                     const url = `${CONFIG.testHost}/${CONFIG.apis.betgameOdds
                         .replace('{optId}', optionId)
-                        .replace('{bonus}', betItem.betAmount)}`;
+                        .replace('{bonus}', followBet.betAmount)}`;
                     
                     const result = await request(url);
                     
                     // 修复1: 更全面的成功判断逻辑
-                    if (result.code !== 0) {
-                        // 特殊处理: 某些API可能返回code=1但实际成功的情况
-                        if (result.code === 1 && result.msg && result.msg.includes("成功")) {
-                            Logger.info(`备用服务器 - 跟随投注成功(特殊响应): 项目 #${betItem.id}，选项 ${betItem.highestOddsTeam}，金额 ${betItem.betAmount}`);
-                            return true;
-                        }
-                        
-                        Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optionId} 投注失败: ${result.msg || '未知错误'}`);
+                    const isSuccess = result.code === 0 || 
+                                      (result.code === 1 && result.msg && result.msg.includes("成功")) ||
+                                      (result.msg && result.msg.includes("成功"));
+                    
+                    if (!isSuccess) {
+                        Logger.error(`备用服务器 - 跟随投注失败: ${result.msg || '未知错误'}`);
                         return false;
                     }
                     
-                    Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optionId} 下注成功: ${JSON.stringify(result)}`);
+                    Logger.info(`备用服务器 - 跟随投注成功: 项目 #${followBet.id}，选项 ${followBet.highestOddsTeam}，金额 ${followBet.betAmount}`);
                     
-                    if (!GlobalInfo.bet_mask[betItem.id]) {
-                        GlobalInfo.bet_mask[betItem.id] = [];
+                    if (!GlobalInfo.bet_mask[followBet.id]) {
+                        GlobalInfo.bet_mask[followBet.id] = [];
                     }
-                    GlobalInfo.bet_mask[betItem.id].push(optionId);
+                    GlobalInfo.bet_mask[followBet.id].push(optionId);
                     
                     return true;
                 } catch (e2) {
@@ -1271,18 +1322,17 @@
                     const result = await request(url);
                     
                     // 修复2: 更全面的成功判断逻辑
-                    if (result.code !== 0) {
-                        // 特殊处理: 某些API可能返回code=1但实际成功的情况
-                        if (result.code === 1 && result.msg && result.msg.includes("成功")) {
-                            Logger.info(`投注成功(特殊响应): 项目 #${betItem.id}，选项 ${optId}，金额 ${bonus}`);
-                        } else {
-                            Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
-                            allSuccess = false;
-                            continue;
-                        }
-                    } else {
-                        Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
+                    const isSuccess = result.code === 0 || 
+                                      (result.code === 1 && result.msg && result.msg.includes("成功")) ||
+                                      (result.msg && result.msg.includes("成功"));
+                    
+                    if (!isSuccess) {
+                        Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                        allSuccess = false;
+                        continue;
                     }
+                    
+                    Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功`);
                     
                     if (!GlobalInfo.bet_mask[betItem.id]) {
                         GlobalInfo.bet_mask[betItem.id] = [];
@@ -1326,18 +1376,17 @@
                         const result = await request(url);
                         
                         // 修复2: 更全面的成功判断逻辑
-                        if (result.code !== 0) {
-                            // 特殊处理: 某些API可能返回code=1但实际成功的情况
-                            if (result.code === 1 && result.msg && result.msg.includes("成功")) {
-                                Logger.info(`备用服务器 - 投注成功(特殊响应): 项目 #${betItem.id}，选项 ${optId}，金额 ${bonus}`);
-                            } else {
-                                Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
-                                allSuccess = false;
-                                continue;
-                            }
-                        } else {
-                            Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
+                        const isSuccess = result.code === 0 || 
+                                          (result.code === 1 && result.msg && result.msg.includes("成功")) ||
+                                          (result.msg && result.msg.includes("成功"));
+                        
+                        if (!isSuccess) {
+                            Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                            allSuccess = false;
+                            continue;
                         }
+                        
+                        Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功`);
                         
                         if (!GlobalInfo.bet_mask[betItem.id]) {
                             GlobalInfo.bet_mask[betItem.id] = [];
@@ -1632,7 +1681,9 @@
         // 其他辅助函数
         function toggleAutoRefresh() {
             CONFIG.state.autoRefresh = !CONFIG.state.autoRefresh;
-            document.getElementById("autoRefreshBtn").textContent = CONFIG.state.autoRefresh ? "关闭自动刷新" : "开启自动刷新";
+            document.getElementById("autoRefreshBtn").innerHTML = CONFIG.state.autoRefresh 
+                ? '<i class="fa fa-refresh mr-1"></i> 关闭自动刷新' 
+                : '<i class="fa fa-refresh mr-1"></i> 开启自动刷新';
             Logger.info(`自动刷新已${CONFIG.state.autoRefresh ? '开启' : '关闭'}`);
             
             if (isServiceRunning) {
@@ -1860,16 +1911,18 @@
                 } else if (!shouldBeRunning && isServiceRunning) {
                     Logger.info(`第${scheduleNumber}组定时任务 - 到达停止时间(${CONFIG.state[`${configKey}StopTime`]})，自动停止服务`);
                     stopService();
-                    // 修复：停止服务后自动取消当前组定时任务的勾选状态
+                    // 修复3: 停止服务后自动取消当前组定时任务的勾选状态并清除定时器
                     const checkbox = document.getElementById(`schedule${scheduleNumber}EnabledCheckbox`);
                     if (checkbox) {
                         checkbox.checked = false;
                         CONFIG.state[`${configKey}Enabled`] = false;
                     }
+                    clearTimeout(scheduleTimers[`check${scheduleNumber}`]);
+                    scheduleTimers[`check${scheduleNumber}`] = null;
+                } else {
+                    // 不在时间段内且未运行，继续等待
+                    scheduleTimers[`check${scheduleNumber}`] = setTimeout(checkSchedule, 5000);
                 }
-                
-                // 5秒后再次检查
-                scheduleTimers[`check${scheduleNumber}`] = setTimeout(checkSchedule, 5000);
             };
             
             // 立即执行一次检查
@@ -1925,7 +1978,7 @@
             if (CONFIG.state.availableBets.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="7" class="border p-8 text-center text-gray-500">
+                        <td colspan="7" class="border border-gray-200 p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
                                 <span>无可用投注项目</span>
@@ -1938,13 +1991,13 @@
             
             let html = `
                 <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
-                    <th class="border p-3 text-left font-semibold">最高赔率</th>
-                    <th class="border p-3 text-left font-semibold">AI预测</th>
-                    <th class="border p-3 text-left font-semibold">结束时间</th>
-                    <th class="border p-3 text-left font-semibold">状态</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">ID</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">描述</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">选项/队伍 (赔率)</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">最高赔率</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">AI预测</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">结束时间</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">状态</th>
                 </tr>
             `;
             
@@ -2008,17 +2061,17 @@
                     : "<div>-</div>";
                 
                 html += `
-                    <tr class="table-hover-row">
-                        <td class="border p-3">${item.id}</td>
-                        <td class="border p-3">
+                    <tr class="table-hover-row border-b border-gray-100">
+                        <td class="border border-gray-200 p-3">${item.id}</td>
+                        <td class="border border-gray-200 p-3">
                             <div class="font-medium">${item.heading}</div>
                             <div class="text-sm text-gray-500">${item.undertext || ''}</div>
                         </td>
-                        <td class="border p-3 text-sm">${optionsHtml}</td>
-                        <td class="border p-3">${highestOption ? highestOption.odds : '-'}</td>
-                        <td class="border p-3">${aiPredictionHtml}</td>
-                        <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
-                        <td class="border p-3">
+                        <td class="border border-gray-200 p-3 text-sm">${optionsHtml}</td>
+                        <td class="border border-gray-200 p-3">${highestOption ? highestOption.odds : '-'}</td>
+                        <td class="border border-gray-200 p-3">${aiPredictionHtml}</td>
+                        <td class="border border-gray-200 p-3">${new Date(item.endtime).toLocaleString()}</td>
+                        <td class="border border-gray-200 p-3">
                             <span class="${statusClass} font-medium">${status}</span>
                         </td>
                     </tr>
@@ -2036,7 +2089,7 @@
             if (pendingBets.length === 0) {
                 table.innerHTML = `
                     <tr>
-                        <td colspan="7" class="border p-8 text-center text-gray-500">
+                        <td colspan="7" class="border border-gray-200 p-8 text-center text-gray-500">
                             <div class="flex flex-col items-center">
                                 <i class="fa fa-hourglass-o text-3xl mb-2 text-gray-300"></i>
                                 <span>暂无待投注项目</span>
@@ -2049,13 +2102,13 @@
             
             let html = `
                 <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">目标选项</th>
-                    <th class="border p-3 text-left font-semibold">赔率</th>
-                    <th class="border p-3 text-left font-semibold">投注金额</th>
-                    <th class="border p-3 text-left font-semibold">计划时间</th>
-                    <th class="border p-3 text-left font-semibold">状态/操作</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">ID</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">描述</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">目标选项</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">赔率</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">投注金额</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">计划时间</th>
+                    <th class="border border-gray-200 p-3 text-left font-semibold">状态/操作</th>
                 </tr>
             `;
             
@@ -2083,24 +2136,24 @@
                         <button onclick="editPendingBetTime('${bet.id}')" class="text-xs text-primary hover:text-primary/80 mr-2">
                             <i class="fa fa-edit mr-1"></i>修改时间
                         </button>
-                        <button onclick="placeBet(${JSON.stringify(bet).replace(/"/g, '&quot;')})" class="text-xs bg-success text-white px-2 py-1 rounded hover:bg-success/90">
+                        <button onclick="placeBet(${JSON.stringify(bet).replace(/"/g, '&quot;')})" class="text-xs bg-success text-white px-2 py-1 rounded hover:bg-success/90 transition">
                             <i class="fa fa-play mr-1"></i>立即投注
                         </button>
                     `;
                 }
                 
                 html += `
-                    <tr class="table-hover-row">
-                        <td class="border p-3">${bet.id}</td>
-                        <td class="border p-3 text-sm">
+                    <tr class="table-hover-row border-b border-gray-100">
+                        <td class="border border-gray-200 p-3">${bet.id}</td>
+                        <td class="border border-gray-200 p-3 text-sm">
                             <div>${bet.heading}</div>
                             <div class="text-gray-500">${bet.undertext || ''}</div>
                         </td>
-                        <td class="border p-3">${bet.highestOddsTeam}</td>
-                        <td class="border p-3">${bet.highestOdds}</td>
-                        <td class="border p-3">${bet.betAmount}</td>
-                        <td class="border p-3">${bet.betTime.toLocaleString()}</td>
-                        <td class="border p-3">
+                        <td class="border border-gray-200 p-3">${bet.highestOddsTeam}</td>
+                        <td class="border border-gray-200 p-3">${bet.highestOdds}</td>
+                        <td class="border border-gray-200 p-3">${bet.betAmount}</td>
+                        <td class="border border-gray-200 p-3">${bet.betTime.toLocaleString()}</td>
+                        <td class="border border-gray-200 p-3">
                             <div class="${statusClass} font-medium mb-1">${bet.status}</div>
                             <div>${actionBtn}</div>
                         </td>

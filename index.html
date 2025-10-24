@@ -6,9 +6,9 @@
     <title>M-Team 馒头菠菜</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
     <script>
-        // 配置Tailwind自定义样式
+        // 配置Tailwind
         tailwind.config = {
             theme: {
                 extend: {
@@ -90,36 +90,6 @@
             document.write('<script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"><\/script>');
         }
 
-        // 音频提示系统
-        const AudioPlayer = {
-            sounds: {
-                scheduleStart: new Audio('https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3'),
-                scheduleStop: new Audio('https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3'),
-                betSuccess: new Audio('https://assets.mixkit.co/sfx/preview/mixkit-achievement-bell-600.mp3')
-            },
-            
-            playScheduleStart() {
-                this.sounds.scheduleStart.currentTime = 0;
-                this.sounds.scheduleStart.play().catch(e => {
-                    Logger.warning("提示音播放失败: " + e.message, true);
-                });
-            },
-            
-            playScheduleStop() {
-                this.sounds.scheduleStop.currentTime = 0;
-                this.sounds.scheduleStop.play().catch(e => {
-                    Logger.warning("提示音播放失败: " + e.message, true);
-                });
-            },
-            
-            playBetSuccess() {
-                this.sounds.betSuccess.currentTime = 0;
-                this.sounds.betSuccess.play().catch(e => {
-                    Logger.warning("提示音播放失败: " + e.message, true);
-                });
-            }
-        };
-
         // 全局变量
         let autoRefreshTimer = null;
         let betCheckTimer = null;
@@ -131,7 +101,7 @@
         let isPageVisible = true;
         let countdownTimer = null;
         let refreshCycleStartTime = 0; // 记录当前刷新周期的开始时间戳
-        let scheduleTimers = { check: null }; // 定时启动/停止定时器
+        let scheduleTimers = { check1: null, check2: null }; // 定时启动/停止定时器
         
         // AI分析相关数据存储
         const AIAnalytics = {
@@ -220,14 +190,17 @@
                 betStrategy: "higher_odds",
                 checkInterval: 2,
                 detailedLogMode: false,
-                oddsThreshold: 1.5,
                 pendingFilter: "all",
                 aiPredictionEnabled: true, // 新增：AI预测开关
                 followCheckInterval: 500, // 新增：跟随模式检查间隔(毫秒)
                 // 新增定时任务配置
-                scheduleEnabled: false,
-                scheduleStartTime: "09:00",
-                scheduleStopTime: "23:00"
+                schedule1Enabled: false,
+                schedule1StartTime: "09:00",
+                schedule1StopTime: "23:00",
+                // 第二组定时任务配置
+                schedule2Enabled: false,
+                schedule2StartTime: "00:00",
+                schedule2StopTime: "06:00"
             }
         };
 
@@ -623,9 +596,6 @@
                             amount: followBet.betAmount
                         };
                         
-                        // 投注成功播放提示音
-                        AudioPlayer.playBetSuccess();
-                        
                         // 投注成功后自动刷新可投注项目
                         Logger.info(`跟随投注成功，3秒后自动刷新可投注项目...`);
                         setTimeout(() => loadBetItems(), 3000);
@@ -688,11 +658,11 @@
                     const result = await request(url);
                     
                     if (result.code !== 0) {
-                        Logger.error(`备用服务器跟随投注失败: ${result.msg || '未知错误'}`);
+                        Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optionId} 投注失败: ${result.msg || '未知错误'}`);
                         return false;
                     }
                     
-                    Logger.info(`备用服务器跟随投注成功: 项目 #${betItem.id}`);
+                    Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optionId} 下注成功: ${JSON.stringify(result)}`);
                     
                     if (!GlobalInfo.bet_mask[betItem.id]) {
                         GlobalInfo.bet_mask[betItem.id] = [];
@@ -912,8 +882,8 @@
                     return true;
                 case "higher_odds":
                     const highestOption = getHighestOddsOption(item);
-                    const meetsThreshold = highestOption && parseFloat(highestOption.odds) >= CONFIG.state.oddsThreshold;
-                    Logger.info(`项目 #${item.id} 高赔率策略检查: ${meetsThreshold ? '通过' : '不通过'} (最高赔率: ${highestOption?.odds || 'N/A'}, 阈值: ${CONFIG.state.oddsThreshold})`, true);
+                    const meetsThreshold = highestOption && parseFloat(highestOption.odds) >= 1.0; // 固定为1.0作为最低阈值
+                    Logger.info(`项目 #${item.id} 高赔率策略检查: ${meetsThreshold ? '通过' : '不通过'} (最高赔率: ${highestOption?.odds || 'N/A'})`, true);
                     return meetsThreshold;
                 default:
                     return false;
@@ -1026,8 +996,6 @@
                 }
                 
                 Logger.info(`项目 #${betItem.id} 下注成功`);
-                // 投注成功播放提示音
-                AudioPlayer.playBetSuccess();
                 
                 // 投注成功后自动刷新可投注项目
                 Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
@@ -1069,8 +1037,6 @@
                     }
                     
                     Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
-                    // 投注成功播放提示音
-                    AudioPlayer.playBetSuccess();
                     
                     // 投注成功后自动刷新可投注项目
                     Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
@@ -1452,15 +1418,19 @@
                 CONFIG.state.betStrategy = document.getElementById("betStrategySelect").value || "higher_odds";
                 CONFIG.state.checkInterval = Math.max(0.1, parseFloat(document.getElementById("checkIntervalInput").value) || 2);
                 CONFIG.state.detailedLogMode = document.getElementById("detailedLogModeCheckbox").checked;
-                CONFIG.state.oddsThreshold = Math.max(1.0, parseFloat(document.getElementById("oddsThresholdInput").value) || 1.5);
                 CONFIG.state.pendingFilter = document.getElementById("pendingFilterSelect").value || "all";
                 CONFIG.state.followCheckInterval = Math.max(100, parseInt(document.getElementById("followCheckIntervalInput").value) || 500);
                 CONFIG.state.aiPredictionEnabled = document.getElementById("aiPredictionEnabledCheckbox").checked;
                 
                 // 保存定时任务配置
-                CONFIG.state.scheduleEnabled = document.getElementById("scheduleEnabledCheckbox").checked;
-                CONFIG.state.scheduleStartTime = document.getElementById("scheduleStartTimeInput").value || "09:00";
-                CONFIG.state.scheduleStopTime = document.getElementById("scheduleStopTimeInput").value || "23:00";
+                CONFIG.state.schedule1Enabled = document.getElementById("schedule1EnabledCheckbox").checked;
+                CONFIG.state.schedule1StartTime = document.getElementById("schedule1StartTimeInput").value || "09:00";
+                CONFIG.state.schedule1StopTime = document.getElementById("schedule1StopTimeInput").value || "23:00";
+                
+                // 第二组定时任务配置
+                CONFIG.state.schedule2Enabled = document.getElementById("schedule2EnabledCheckbox").checked;
+                CONFIG.state.schedule2StartTime = document.getElementById("schedule2StartTimeInput").value || "00:00";
+                CONFIG.state.schedule2StopTime = document.getElementById("schedule2StopTimeInput").value || "06:00";
                 
                 const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
                 const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
@@ -1475,7 +1445,6 @@
                 document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
                 document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
                 document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
-                document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
                 document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
                 
                 Logger.toggleDetailedMode(CONFIG.state.detailedLogMode);
@@ -1483,11 +1452,7 @@
                 Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
                 // 更新定时任务
-                if (CONFIG.state.scheduleEnabled) {
-                    setupSchedule();
-                } else {
-                    clearSchedule();
-                }
+                setupSchedules();
                 
                 if (isServiceRunning) {
                     flushConfig().then(() => {
@@ -1533,16 +1498,29 @@
         }
 
         // 设置定时任务
-        function setupSchedule() {
-            clearSchedule();
+        function setupSchedules() {
+            clearSchedules();
             
-            if (!CONFIG.state.scheduleEnabled) return;
+            // 设置第一组定时任务
+            if (CONFIG.state.schedule1Enabled) {
+                setupSchedule(1);
+            }
             
-            Logger.info(`已启用定时任务 - 启动时间: ${CONFIG.state.scheduleStartTime}, 停止时间: ${CONFIG.state.scheduleStopTime}`);
+            // 设置第二组定时任务
+            if (CONFIG.state.schedule2Enabled) {
+                setupSchedule(2);
+            }
+        }
+
+        // 设置单个定时任务
+        function setupSchedule(scheduleNumber) {
+            const configKey = `schedule${scheduleNumber}`;
+            
+            Logger.info(`已启用第${scheduleNumber}组定时任务 - 启动时间: ${CONFIG.state[`${configKey}StartTime`]}, 停止时间: ${CONFIG.state[`${configKey}StopTime`]}`);
             
             // 计算今天的启动和停止时间
-            const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
-            const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
+            const [startHours, startMinutes] = CONFIG.state[`${configKey}StartTime`].split(':').map(Number);
+            const [stopHours, stopMinutes] = CONFIG.state[`${configKey}StopTime`].split(':').map(Number);
             
             // 设置每日检查定时器
             const checkSchedule = () => {
@@ -1558,32 +1536,36 @@
                 
                 // 根据判断结果启动或停止服务
                 if (shouldBeRunning && !isServiceRunning) {
-                    Logger.info(`到达定时启动时间(${CONFIG.state.scheduleStartTime})，自动启动服务`);
-                    // 播放定时启动提示音
-                    AudioPlayer.playScheduleStart();
+                    Logger.info(`第${scheduleNumber}组定时任务 - 到达启动时间(${CONFIG.state[`${configKey}StartTime`]})，自动启动服务`);
                     startService();
                 } else if (!shouldBeRunning && isServiceRunning) {
-                    Logger.info(`到达定时停止时间(${CONFIG.state.scheduleStopTime})，自动停止服务`);
-                    // 播放定时停止提示音
-                    AudioPlayer.playScheduleStop();
+                    Logger.info(`第${scheduleNumber}组定时任务 - 到达停止时间(${CONFIG.state[`${configKey}StopTime`]})，自动停止服务`);
                     stopService();
                 }
                 
-                // 1分钟后再次检查
-                scheduleTimers.check = setTimeout(checkSchedule, 5000);
+                // 5秒后再次检查
+                scheduleTimers[`check${scheduleNumber}`] = setTimeout(checkSchedule, 5000);
             };
             
             // 立即执行一次检查
             checkSchedule();
         }
 
-        // 清除定时任务
-        function clearSchedule() {
-            if (scheduleTimers.check) {
-                clearTimeout(scheduleTimers.check);
-                scheduleTimers.check = null;
+        // 清除所有定时任务
+        function clearSchedules() {
+            // 清除第一组定时任务
+            if (scheduleTimers.check1) {
+                clearTimeout(scheduleTimers.check1);
+                scheduleTimers.check1 = null;
             }
-            Logger.info("定时任务已清除");
+            
+            // 清除第二组定时任务
+            if (scheduleTimers.check2) {
+                clearTimeout(scheduleTimers.check2);
+                scheduleTimers.check2 = null;
+            }
+            
+            Logger.info("所有定时任务已清除");
         }
 
         function updateServiceStatus() {
@@ -1807,15 +1789,19 @@
             document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
             document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
             document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
-            document.getElementById("oddsThresholdInput").value = CONFIG.state.oddsThreshold;
             document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
             document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
             document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
             
             // 初始化定时任务配置
-            document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
-            document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
-            document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
+            document.getElementById("schedule1EnabledCheckbox").checked = CONFIG.state.schedule1Enabled;
+            document.getElementById("schedule1StartTimeInput").value = CONFIG.state.schedule1StartTime;
+            document.getElementById("schedule1StopTimeInput").value = CONFIG.state.schedule1StopTime;
+            
+            // 第二组定时任务配置
+            document.getElementById("schedule2EnabledCheckbox").checked = CONFIG.state.schedule2Enabled;
+            document.getElementById("schedule2StartTimeInput").value = CONFIG.state.schedule2StartTime;
+            document.getElementById("schedule2StopTimeInput").value = CONFIG.state.schedule2StopTime;
             
             const hms = convertToHMS(CONFIG.state.refreshInterval);
             document.getElementById("refreshHoursInput").value = hms.hours;
@@ -1838,12 +1824,38 @@
             });
             
             // 定时任务开关事件
-            document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
-                CONFIG.state.scheduleEnabled = this.checked;
-                if (this.checked) {
-                    setupSchedule();
-                } else {
-                    clearSchedule();
+            document.getElementById("schedule1EnabledCheckbox").addEventListener("change", function() {
+                CONFIG.state.schedule1Enabled = this.checked;
+                setupSchedules(); // 立即生效，无需等待保存参数
+            });
+            
+            document.getElementById("schedule2EnabledCheckbox").addEventListener("change", function() {
+                CONFIG.state.schedule2Enabled = this.checked;
+                setupSchedules(); // 立即生效，无需等待保存参数
+            });
+            
+            // 定时任务时间修改事件
+            document.getElementById("schedule1StartTimeInput").addEventListener("change", function() {
+                if (CONFIG.state.schedule1Enabled) {
+                    setupSchedules(); // 立即生效
+                }
+            });
+            
+            document.getElementById("schedule1StopTimeInput").addEventListener("change", function() {
+                if (CONFIG.state.schedule1Enabled) {
+                    setupSchedules(); // 立即生效
+                }
+            });
+            
+            document.getElementById("schedule2StartTimeInput").addEventListener("change", function() {
+                if (CONFIG.state.schedule2Enabled) {
+                    setupSchedules(); // 立即生效
+                }
+            });
+            
+            document.getElementById("schedule2StopTimeInput").addEventListener("change", function() {
+                if (CONFIG.state.schedule2Enabled) {
+                    setupSchedules(); // 立即生效
                 }
             });
             
@@ -1907,20 +1919,38 @@
                 </span>
             </h2>
             
-            <!-- 定时启动/停止设置 -->
+            <!-- 第一组定时启动/停止设置 -->
             <div class="mb-5 bg-gray-50 p-4 rounded-lg">
                 <div class="flex items-center gap-2 mb-3">
-                    <input type="checkbox" id="scheduleEnabledCheckbox" class="rounded text-primary focus:ring-primary">
-                    <label for="scheduleEnabledCheckbox" class="text-sm font-medium text-gray-700">启用定时启动/停止服务（更改重新勾选和下拉保存参数）</label>
+                    <input type="checkbox" id="schedule1EnabledCheckbox" class="rounded text-primary focus:ring-primary">
+                    <label for="schedule1EnabledCheckbox" class="text-sm font-medium text-gray-700">第一组 - 启用定时启动/停止服务</label>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label for="scheduleStartTimeInput" class="block text-sm text-gray-600 mb-1.5">定时启动时间</label>
-                        <input type="time" id="scheduleStartTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                        <label for="schedule1StartTimeInput" class="block text-sm text-gray-600 mb-1.5">定时启动时间</label>
+                        <input type="time" id="schedule1StartTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
                     </div>
                     <div>
-                        <label for="scheduleStopTimeInput" class="block text-sm text-gray-600 mb-1.5">定时停止时间</label>
-                        <input type="time" id="scheduleStopTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                        <label for="schedule1StopTimeInput" class="block text-sm text-gray-600 mb-1.5">定时停止时间</label>
+                        <input type="time" id="schedule1StopTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 第二组定时启动/停止设置 -->
+            <div class="mb-5 bg-gray-50 p-4 rounded-lg">
+                <div class="flex items-center gap-2 mb-3">
+                    <input type="checkbox" id="schedule2EnabledCheckbox" class="rounded text-primary focus:ring-primary">
+                    <label for="schedule2EnabledCheckbox" class="text-sm font-medium text-gray-700">第二组 - 启用定时启动/停止服务</label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="schedule2StartTimeInput" class="block text-sm text-gray-600 mb-1.5">定时启动时间</label>
+                        <input type="time" id="schedule2StartTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                    </div>
+                    <div>
+                        <label for="schedule2StopTimeInput" class="block text-sm text-gray-600 mb-1.5">定时停止时间</label>
+                        <input type="time" id="schedule2StopTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
                     </div>
                 </div>
             </div>
@@ -2004,10 +2034,6 @@
                         <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                         <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
-                </div>
-                <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">赔率阈值（高赔率策略）</label>
-                    <input type="number" id="oddsThresholdInput" min="1.0" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
                     <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>

@@ -917,7 +917,14 @@
                 
                 const result = await request(url);
                 
+                // 修复1: 更全面的成功判断逻辑
                 if (result.code !== 0) {
+                    // 特殊处理: 某些API可能返回code=1但实际成功的情况
+                    if (result.code === 1 && result.msg && result.msg.includes("成功")) {
+                        Logger.info(`跟随投注成功(特殊响应): 项目 #${betItem.id}，选项 ${betItem.highestOddsTeam}，金额 ${betItem.betAmount}`);
+                        return true;
+                    }
+                    
                     Logger.error(`跟随投注失败: ${result.msg || '未知错误'}`);
                     return false;
                 }
@@ -939,7 +946,14 @@
                     
                     const result = await request(url);
                     
+                    // 修复1: 更全面的成功判断逻辑
                     if (result.code !== 0) {
+                        // 特殊处理: 某些API可能返回code=1但实际成功的情况
+                        if (result.code === 1 && result.msg && result.msg.includes("成功")) {
+                            Logger.info(`备用服务器 - 跟随投注成功(特殊响应): 项目 #${betItem.id}，选项 ${betItem.highestOddsTeam}，金额 ${betItem.betAmount}`);
+                            return true;
+                        }
+                        
                         Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optionId} 投注失败: ${result.msg || '未知错误'}`);
                         return false;
                     }
@@ -1239,6 +1253,8 @@
                     });
                 }
                 
+                let allSuccess = true;
+                
                 for (let i = 0; i < choices.length; i++) {
                     const optId = choices[i];
                     const bonus = myBonuses[i];
@@ -1254,12 +1270,19 @@
                     
                     const result = await request(url);
                     
+                    // 修复2: 更全面的成功判断逻辑
                     if (result.code !== 0) {
-                        Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
-                        return false;
+                        // 特殊处理: 某些API可能返回code=1但实际成功的情况
+                        if (result.code === 1 && result.msg && result.msg.includes("成功")) {
+                            Logger.info(`投注成功(特殊响应): 项目 #${betItem.id}，选项 ${optId}，金额 ${bonus}`);
+                        } else {
+                            Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                            allSuccess = false;
+                            continue;
+                        }
+                    } else {
+                        Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                     }
-                    
-                    Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                     
                     if (!GlobalInfo.bet_mask[betItem.id]) {
                         GlobalInfo.bet_mask[betItem.id] = [];
@@ -1271,16 +1294,23 @@
                     }
                 }
                 
-                Logger.info(`项目 #${betItem.id} 下注成功`);
-                
-                // 投注成功后自动刷新
-                Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
-                setTimeout(() => loadBetItems(), 3000);
-                
-                return true;
+                if (allSuccess) {
+                    Logger.info(`项目 #${betItem.id} 下注成功`);
+                    
+                    // 投注成功后自动刷新
+                    Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
+                    setTimeout(() => loadBetItems(), 3000);
+                    
+                    return true;
+                } else {
+                    Logger.warning(`项目 #${betItem.id} 部分选项投注失败`);
+                    return false;
+                }
             } catch (e) {
                 Logger.warning("主服务器下注失败，尝试备用服务器...");
                 try {
+                    let allSuccess = true;
+                    
                     for (let i = 0; i < choices.length; i++) {
                         const optId = choices[i];
                         const bonus = myBonuses[i];
@@ -1295,12 +1325,19 @@
                         
                         const result = await request(url);
                         
+                        // 修复2: 更全面的成功判断逻辑
                         if (result.code !== 0) {
-                            Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
-                            return false;
+                            // 特殊处理: 某些API可能返回code=1但实际成功的情况
+                            if (result.code === 1 && result.msg && result.msg.includes("成功")) {
+                                Logger.info(`备用服务器 - 投注成功(特殊响应): 项目 #${betItem.id}，选项 ${optId}，金额 ${bonus}`);
+                            } else {
+                                Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                                allSuccess = false;
+                                continue;
+                            }
+                        } else {
+                            Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                         }
-                        
-                        Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
                         
                         if (!GlobalInfo.bet_mask[betItem.id]) {
                             GlobalInfo.bet_mask[betItem.id] = [];
@@ -1312,13 +1349,18 @@
                         }
                     }
                     
-                    Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
-                    
-                    // 投注成功后自动刷新
-                    Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
-                    setTimeout(() => loadBetItems(), 3000);
-                    
-                    return true;
+                    if (allSuccess) {
+                        Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
+                        
+                        // 投注成功后自动刷新
+                        Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
+                        setTimeout(() => loadBetItems(), 3000);
+                        
+                        return true;
+                    } else {
+                        Logger.warning(`备用服务器 - 项目 #${betItem.id} 部分选项投注失败`);
+                        return false;
+                    }
                 } catch (e2) {
                     Logger.error(`项目 #${betItem.id} 下注请求失败: ${e2.message}`);
                     return false;

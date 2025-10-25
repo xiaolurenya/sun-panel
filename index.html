@@ -1087,8 +1087,8 @@
         async function getTargetUserBet(gameId) {
             try {
                 Logger.info(`尝试获取目标用户 ${CONFIG.state.targetUserId} 的投注记录 (项目 #${gameId})`, true);
-                const url = `${CONFIG.mainHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
-              const data = await request(url);
+               const url = `${CONFIG.mainHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
+               const data = await request(url);
                 
                 if (data?.data && Array.isArray(data.data)) {
                     const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);
@@ -1103,8 +1103,8 @@
             } catch (e) {
                 Logger.warning(`获取用户投注记录失败: ${e.message}，尝试备用服务器`, true);
                 try {
-                    const url = `${CONFIG.testHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
-                    const data = await request(url);
+                const url = `${CONFIG.testHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
+                const data = await request(url);
                     
                     if (data?.data && Array.isArray(data.data)) {
                         const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);

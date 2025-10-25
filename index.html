@@ -62,6 +62,53 @@
                 color: #7B61FF;
                 font-weight: bold;
             }
+            /* 关键日志弹窗样式 */
+            .toast-notification {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                width: 380px;
+                max-width: calc(100vw - 40px);
+                background: white;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                overflow: hidden;
+                z-index: 9999;
+                transition: transform 0.3s ease, opacity 0.3s ease;
+                transform: translateY(120%);
+                opacity: 0;
+            }
+            .toast-notification.show {
+                transform: translateY(0);
+                opacity: 1;
+            }
+            .toast-header {
+                padding: 12px 16px;
+                font-weight: 600;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .toast-body {
+                padding: 0 16px 16px;
+                font-size: 14px;
+                line-height: 1.5;
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .toast-close {
+                cursor: pointer;
+                width: 24px;
+                height: 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                transition: background-color 0.2s;
+            }
+            .toast-close:hover {
+                background-color: rgba(0,0,0,0.05);
+            }
         }
     </style>
     <script>
@@ -151,10 +198,92 @@
             followedBets: {} // 记录已跟随的投注 {gameId: {optionId, amount}}
         };
 
-        // 日志系统
+        // 关键日志弹窗系统
+        const ToastNotification = {
+            container: null,
+            init() {
+                // 创建弹窗容器
+                this.container = document.createElement('div');
+                this.container.className = 'toast-notification';
+                document.body.appendChild(this.container);
+                
+                // 创建弹窗头部
+                const header = document.createElement('div');
+                header.className = 'toast-header';
+                this.container.appendChild(header);
+                
+                // 创建标题
+                this.titleEl = document.createElement('span');
+                header.appendChild(this.titleEl);
+                
+                // 创建关闭按钮
+                const closeBtn = document.createElement('div');
+                closeBtn.className = 'toast-close';
+                closeBtn.innerHTML = '<i class="fa fa-times"></i>';
+                closeBtn.onclick = () => this.hide();
+                header.appendChild(closeBtn);
+                
+                // 创建内容区域
+                this.bodyEl = document.createElement('div');
+                this.bodyEl.className = 'toast-body';
+                this.container.appendChild(this.bodyEl);
+            },
+            show(title, content, type = 'info') {
+                if (!this.container) this.init();
+                
+                // 设置样式
+                let headerBg = 'bg-primary text-white';
+                let icon = 'fa-info-circle';
+                
+                switch(type) {
+                    case 'success':
+                        headerBg = 'bg-success text-white';
+                        icon = 'fa-check-circle';
+                        break;
+                    case 'warning':
+                        headerBg = 'bg-warning text-white';
+                        icon = 'fa-exclamation-triangle';
+                        break;
+                    case 'error':
+                        headerBg = 'bg-danger text-white';
+                        icon = 'fa-times-circle';
+                        break;
+                }
+                
+                // 设置内容
+                this.titleEl.className = headerBg;
+                this.titleEl.innerHTML = `<i class="fa ${icon} mr-2"></i>${title}`;
+                this.bodyEl.innerHTML = content;
+                
+                // 显示弹窗
+                this.container.classList.add('show');
+                
+                // 5秒后自动关闭
+                setTimeout(() => this.hide(), 5000);
+            },
+            hide() {
+                if (this.container) {
+                    this.container.classList.remove('show');
+                }
+            }
+        };
+
+        // 日志系统 - 修改为最新日志在下方，关键日志弹窗提示
         const Logger = {
             logs: [],
             detailedMode: false,
+            // 关键日志类型定义
+            criticalLogTypes: [
+                "服务已启动",
+                "服务已停止",
+                "投注成功",
+                "跟随投注成功",
+                "API Key验证成功",
+                "API Key验证失败",
+                "检测到紧急待投注项目",
+                "到达定时启动时间",
+                "到达定时停止时间"
+            ],
             log(content, level = "INFO", detailed = false) {
                 if (detailed && !this.detailedMode) return;
                 
@@ -165,9 +294,13 @@
                     fractionalSecondDigits: 3
                 });
                 const logItem = `[${now}] [${level}] ${content}`;
-                this.logs.unshift(logItem);
-                if (this.logs.length > 500) this.logs.pop();
+                // 最新日志添加到数组末尾（原unshift改为push）
+                this.logs.push(logItem);
+                if (this.logs.length > 500) this.logs.shift();
                 this.render();
+                
+                // 检查是否为关键日志，若是则显示弹窗
+                this.checkCriticalLog(content, level);
             },
             info(content, detailed = false) { this.log(content, "INFO", detailed); },
             error(content, detailed = false) { this.log(content, "ERROR", detailed); },
@@ -183,6 +316,7 @@
                     mainPanel.innerHTML = this.logs.map(log => 
                         `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
+                    // 滚动到底部显示最新日志
                     mainPanel.scrollTop = mainPanel.scrollHeight;
                 }
                 
@@ -191,12 +325,30 @@
                     modalPanel.innerHTML = this.logs.map(log => 
                         `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
+                    // 滚动到底部显示最新日志
                     modalPanel.scrollTop = modalPanel.scrollHeight;
                 }
             },
             toggleDetailedMode(enabled) {
                 this.detailedMode = enabled;
                 this.info(`详细日志模式已${enabled ? '开启' : '关闭'}`, true);
+            },
+            // 检查关键日志并显示弹窗
+            checkCriticalLog(content, level) {
+                // 匹配关键日志关键词
+                const isCritical = this.criticalLogTypes.some(type => content.includes(type));
+                if (!isCritical) return;
+                
+                // 确定弹窗类型
+                let toastType = 'info';
+                if (level === 'ERROR') toastType = 'error';
+                else if (level === 'WARN') toastType = 'warning';
+                else if (content.includes('成功') || content.includes('已启动')) toastType = 'success';
+                
+                // 提取标题（关键日志关键词）
+                let title = this.criticalLogTypes.find(type => content.includes(type)) || '系统通知';
+                // 显示弹窗
+                ToastNotification.show(title, content, toastType);
             }
         };
 
@@ -1614,7 +1766,7 @@
             }
         }
 
-        // 设置定时任务
+        // 设置定时任务 - 修复：仅在到达设定时间时启动服务，勾选时不立即启动
         function setupSchedule() {
             clearSchedule();
             
@@ -1622,12 +1774,11 @@
             
             Logger.info(`已启用定时任务 - 启动时间: ${CONFIG.state.scheduleStartTime}, 停止时间: ${CONFIG.state.scheduleStopTime}`);
             
-            const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
-            const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
-            
             const checkSchedule = () => {
                 const now = new Date();
                 const currentTime = now.getHours() * 60 + now.getMinutes();
+                const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
+                const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
                 const startTime = startHours * 60 + startMinutes;
                 const stopTime = stopHours * 60 + stopMinutes;
                 
@@ -1635,19 +1786,24 @@
                     ? currentTime >= startTime && currentTime < stopTime
                     : currentTime >= startTime || currentTime < stopTime;
                 
+                // 仅在状态需要切换时执行操作，避免重复启动/停止
                 if (shouldBeRunning && !isServiceRunning) {
                     Logger.info(`到达定时启动时间(${CONFIG.state.scheduleStartTime})，自动启动服务`);
                     AudioPlayer.playScheduleStart();
-                    startService();
-                } else if (!shouldBeRunning && isServiceRunning) {
+                    // 从定时启动，标记来源为检测启动
+                    startService(true);
+                } else if (!shouldBeRunning && isServiceRunning && isServiceStartedByCheck) {
+                    // 仅停止由定时/检测启动的服务，避免停止手动启动的服务
                     Logger.info(`到达定时停止时间(${CONFIG.state.scheduleStopTime})，自动停止服务`);
                     AudioPlayer.playScheduleStop();
                     stopService();
                 }
                 
+                // 5秒后再次检查
                 scheduleTimers.check = setTimeout(checkSchedule, 5000);
             };
             
+            // 立即执行一次检查（仅判断状态，不强制启动）
             checkSchedule();
         }
 
@@ -1920,14 +2076,14 @@
                 }
             });
             
-            // 定时任务开关事件 - 修复：直接应用定时设置，无需等待保存参数
+            // 定时任务开关事件 - 修复：仅启用定时检查，不立即启动服务
             document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
                 const wasEnabled = CONFIG.state.scheduleEnabled;
                 CONFIG.state.scheduleEnabled = this.checked;
                 
                 if (this.checked) {
-                    Logger.info("已启用定时启动/停止服务");
-                    // 立即应用新设置
+                    Logger.info("已启用定时启动/停止服务（仅到达设定时间时执行）");
+                    // 立即应用新设置，启动定时检查
                     setupSchedule();
                 } else {
                     Logger.info("已禁用定时启动/停止服务");
@@ -1944,7 +2100,7 @@
                 if (this.value) {
                     CONFIG.state.scheduleStartTime = this.value;
                     Logger.info(`定时启动时间已更新为: ${this.value}`);
-                    // 如果定时功能已启用，重新设置
+                    // 如果定时功能已启用，重新设置定时检查
                     if (CONFIG.state.scheduleEnabled) {
                         setupSchedule();
                     }
@@ -1956,7 +2112,7 @@
                 if (this.value) {
                     CONFIG.state.scheduleStopTime = this.value;
                     Logger.info(`定时停止时间已更新为: ${this.value}`);
-                    // 如果定时功能已启用，重新设置
+                    // 如果定时功能已启用，重新设置定时检查
                     if (CONFIG.state.scheduleEnabled) {
                         setupSchedule();
                     }
@@ -2005,6 +2161,9 @@
             
             // 初始化页面可见性状态
             isPageVisible = document.visibilityState === 'visible';
+            
+            // 初始化关键日志弹窗
+            ToastNotification.init();
             
             // 启动5分钟自动检测机制（页面加载后默认启动）
             startFiveMinCheckTimer();

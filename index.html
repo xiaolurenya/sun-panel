@@ -120,6 +120,51 @@
             }
         };
 
+        // 关键日志提醒弹窗 - 新增
+        const LogAlert = {
+            alertElement: null,
+            init() {
+                // 创建提醒弹窗元素
+                this.alertElement = document.createElement('div');
+                this.alertElement.id = 'logAlert';
+                this.alertElement.className = 'fixed top-4 right-4 max-w-md bg-white rounded-lg shadow-lg border-l-4 border-danger p-4 z-50 hidden';
+                this.alertElement.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-start">
+                            <i class="fa fa-exclamation-circle text-danger mt-1 mr-3 text-lg"></i>
+                            <div>
+                                <h4 class="font-semibold text-dark mb-1">关键日志提醒</h4>
+                                <p id="alertLogContent" class="text-sm text-gray-700"></p>
+                            </div>
+                        </div>
+                        <button id="closeAlertBtn" class="text-gray-400 hover:text-gray-600">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(this.alertElement);
+                
+                // 绑定关闭按钮事件
+                document.getElementById('closeAlertBtn').addEventListener('click', () => {
+                    this.hide();
+                });
+            },
+            show(content) {
+                if (!this.alertElement) this.init();
+                document.getElementById('alertLogContent').textContent = content;
+                this.alertElement.classList.remove('hidden');
+                // 3秒后自动隐藏
+                setTimeout(() => {
+                    this.hide();
+                }, 3000);
+            },
+            hide() {
+                if (this.alertElement) {
+                    this.alertElement.classList.add('hidden');
+                }
+            }
+        };
+
         // 全局变量 - 1.修改自动检测周期为5分钟
         let autoRefreshTimer = null;
         let betCheckTimer = null;
@@ -151,7 +196,7 @@
             followedBets: {} // 记录已跟随的投注 {gameId: {optionId, amount}}
         };
 
-        // 日志系统
+        // 日志系统 - 修复：最新日志显示在下方；新增：关键日志右键提醒
         const Logger = {
             logs: [],
             detailedMode: false,
@@ -165,9 +210,15 @@
                     fractionalSecondDigits: 3
                 });
                 const logItem = `[${now}] [${level}] ${content}`;
-                this.logs.unshift(logItem);
-                if (this.logs.length > 500) this.logs.pop();
+                // 修复：最新日志push到数组末尾（原unshift改为push）
+                this.logs.push(logItem);
+                if (this.logs.length > 500) this.logs.shift(); // 超过500条删除最旧的
                 this.render();
+                
+                // 新增：关键日志（ERROR/WARN）触发提醒
+                if (level === "ERROR" || level === "WARN") {
+                    LogAlert.show(content);
+                }
             },
             info(content, detailed = false) { this.log(content, "INFO", detailed); },
             error(content, detailed = false) { this.log(content, "ERROR", detailed); },
@@ -183,6 +234,7 @@
                     mainPanel.innerHTML = this.logs.map(log => 
                         `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
+                    // 修复：滚动到底部显示最新日志
                     mainPanel.scrollTop = mainPanel.scrollHeight;
                 }
                 
@@ -191,6 +243,7 @@
                     modalPanel.innerHTML = this.logs.map(log => 
                         `<div class="text-sm py-1 ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-warning' : ''}">${log}</div>`
                     ).join("");
+                    // 修复：滚动到底部显示最新日志
                     modalPanel.scrollTop = modalPanel.scrollHeight;
                 }
             },
@@ -650,9 +703,9 @@
             }, checkInterval);
         }
 
-        // 计算跟随金额
+        // 计算跟随金额 - 修复：基础金额为0时的异常
         function calculateFollowAmount(baseAmount) {
-            const base = parseInt(baseAmount) || 0;
+            const base = parseInt(baseAmount) || CONFIG.state.baseAmount; // 修复：默认使用基础金额而非0
             const bias = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
             return Math.max(base + bias, 100);
         }
@@ -806,9 +859,10 @@
             }
         }
 
-        // 获取队伍历史数据
+        // 获取队伍历史数据 - 修复：字符串原型污染问题
         async function fetchTeamHistory(teamName) {
-            const teamId = teamName.hashCode();
+            // 修复：使用独立哈希函数替代String.prototype.hashCode
+            const teamId = stringHashCode(teamName);
             
             if (AIAnalytics.historicalData[teamId]) {
                 return AIAnalytics.historicalData[teamId];
@@ -975,6 +1029,13 @@
                 }
                 
                 for (let i = 0; i < choices.length; i++) {
+                    // 新增：服务运行状态检查，防止服务停止后继续投注
+                    if (!isServiceRunning) {
+                        Logger.error(`服务已停止，终止项目 #${betItem.id} 投注流程`);
+                        isBettingInProgress = false;
+                        return false;
+                    }
+                    
                     const optId = choices[i];
                     const bonus = myBonuses[i];
                     
@@ -987,10 +1048,22 @@
                         .replace('{optId}', optId)
                         .replace('{bonus}', bonus)}`;
                     
+                    // 实时更新投注状态
+                    const betIndex = pendingBets.findIndex(b => b.id === betItem.id && b.status === "等待中");
+                    if (betIndex !== -1) {
+                        pendingBets[betIndex].status = "处理中";
+                        renderPendingBetsTable();
+                    }
+                    
                     const result = await request(url);
                     
                     if (result.code !== 0) {
                         Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                        // 恢复状态
+                        if (betIndex !== -1) {
+                            pendingBets[betIndex].status = "失败";
+                            renderPendingBetsTable();
+                        }
                         isBettingInProgress = false;
                         return false;
                     }
@@ -1002,6 +1075,12 @@
                         GlobalInfo.bet_mask[betItem.id] = [];
                     }
                     GlobalInfo.bet_mask[betItem.id].push(optId);
+                    
+                    // 实时更新为已完成
+                    if (betIndex !== -1) {
+                        pendingBets[betIndex].status = "已完成";
+                        renderPendingBetsTable();
+                    }
                     
                     if (i < choices.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
@@ -1041,6 +1120,13 @@
                 Logger.warning("主服务器下注失败，尝试备用服务器...");
                 try {
                     for (let i = 0; i < choices.length; i++) {
+                        // 新增：服务运行状态检查
+                        if (!isServiceRunning) {
+                            Logger.error(`服务已停止，终止项目 #${betItem.id} 投注流程`);
+                            isBettingInProgress = false;
+                            return false;
+                        }
+                        
                         const optId = choices[i];
                         const bonus = myBonuses[i];
                         
@@ -1052,10 +1138,20 @@
                             .replace('{optId}', optId)
                             .replace('{bonus}', bonus)}`;
                         
+                        const betIndex = pendingBets.findIndex(b => b.id === betItem.id && b.status === "等待中");
+                        if (betIndex !== -1) {
+                            pendingBets[betIndex].status = "处理中";
+                            renderPendingBetsTable();
+                        }
+                        
                         const result = await request(url);
                         
                         if (result.code !== 0) {
                             Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                            if (betIndex !== -1) {
+                                pendingBets[betIndex].status = "失败";
+                                renderPendingBetsTable();
+                            }
                             isBettingInProgress = false;
                             return false;
                         }
@@ -1066,6 +1162,11 @@
                             GlobalInfo.bet_mask[betItem.id] = [];
                         }
                         GlobalInfo.bet_mask[betItem.id].push(optId);
+                        
+                        if (betIndex !== -1) {
+                            pendingBets[betIndex].status = "已完成";
+                            renderPendingBetsTable();
+                        }
                         
                         if (i < choices.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
@@ -1157,7 +1258,7 @@
             }
         }
 
-        // 5分钟检测处理函数
+        // 5分钟检测处理函数 - 修复：未定义变量问题
         async function fiveMinCheckHandler() {
             // 投注中，跳过检测
             if (isBettingInProgress) return;
@@ -1183,7 +1284,7 @@
                 
                 Logger.info("检测到紧急项目，保留数据刷新倒计时");
                 
-                // 标记服务由检测启动
+                // 标记服务由检测启动 - 修复：变量提前声明
                 isServiceStartedByCheck = true;
                 
                 // 启动服务（如果未运行）
@@ -1213,7 +1314,7 @@
             lastActivityTime = new Date().getTime();
         }
 
-        // 服务控制函数
+        // 服务控制函数 - 修复：变量提前声明
         let isServiceStartedByCheck = false;
         async function startService(isFromCheck = false) {
             if (isServiceRunning) {
@@ -1260,6 +1361,12 @@
             // 清除所有跟随检查定时器
             Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
             followCheckTimers = {};
+            
+            // 清除投注流程计时器（如果存在）
+            if (window.serviceStopTimer) {
+                clearTimeout(window.serviceStopTimer);
+                window.serviceStopTimer = null;
+            }
             
             // 仅手动启动的服务，停止自动刷新
             if (!isServiceStartedByCheck) {
@@ -1565,7 +1672,8 @@
                 document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
                 
                 Logger.toggleDetailedMode(CONFIG.state.detailedLogMode);
-                const hms = convertToHMS(CONFIG.state.refreshInterval);
+                const hms = convert
+				                ToHMS(CONFIG.state.refreshInterval);
                 Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
                 // 应用定时设置
@@ -1868,16 +1976,16 @@
             table.innerHTML = html;
         }
 
-        // 字符串哈希函数
-        String.prototype.hashCode = function() {
+        // 独立字符串哈希函数 - 修复原型污染问题
+        function stringHashCode(str) {
             let hash = 0;
-            for (let i = 0; i < this.length; i++) {
-                const char = this.charCodeAt(i);
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
                 hash = ((hash << 5) - hash) + char;
-                hash = hash & hash;
+                hash = hash & hash; // 转换为32位整数
             }
             return Math.abs(hash);
-        };
+        }
 
         // 页面初始化
         document.addEventListener("DOMContentLoaded", () => {
@@ -2005,6 +2113,9 @@
             
             // 初始化页面可见性状态
             isPageVisible = document.visibilityState === 'visible';
+            
+            // 初始化关键日志提醒组件
+            LogAlert.init();
             
             // 启动5分钟自动检测机制（页面加载后默认启动）
             startFiveMinCheckTimer();

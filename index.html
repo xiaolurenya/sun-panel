@@ -72,19 +72,19 @@
                 background-color: rgba(156, 163, 175, 0.5);
                 border-radius: 2px;
             }
-            /* 优化AI标识样式 */
+            /* 优化AI标识样式 - 改为右上角小字体蓝色 */
             .ai-tag {
                 display: inline-block;
-                background-color: rgba(123, 97, 255, 0.1);
-                color: #7B61FF;
-                font-size: 0.65rem;
+                background-color: rgba(22, 93, 255, 0.1);
+                color: #165DFF; /* 蓝色 */
+                font-size: 0.55rem; /* 更小字体 */
                 font-weight: 600;
-                padding: 0 5px;
-                border-radius: 3px;
-                margin-left: 4px;
-                letter-spacing: 0.3px;
+                padding: 0 3px;
+                border-radius: 2px;
+                margin-left: 3px;
+                vertical-align: top; /* 顶部对齐 */
+                letter-spacing: 0.2px;
                 text-transform: uppercase;
-                box-shadow: 0 1px 2px rgba(123, 97, 255, 0.1);
             }
         }
     </style>
@@ -223,7 +223,8 @@
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">投注策略</label>
                             <select id="betStrategySelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition">
-                                <option value="higher_odds">最高赔率优先 <span class="ai-tag">AI</span></option>
+                                <!-- 修复：将AI标识移至右上角小字体蓝色 -->
+                                <option value="higher_odds">最高赔率优先 <span class="ai-tag">ai</span></option>
                                 <option value="follow">跟随目标用户</option>
                                 <option value="larger">押大</option>
                                 <option value="smaller">押小</option>
@@ -2075,7 +2076,7 @@
                     optionsHtml += `
                         <div class="${isHighest ? 'odds-highlight' : ''}">
                             ${opt.text} 
-                            ${isAiPredicted ? '<span class="ai-tag">AI</span>' : ''}
+                            ${isAiPredicted ? '<span class="ai-tag">ai</span>' : ''}
                             (${opt.odds})
                         </div>
                     `;
@@ -2159,7 +2160,7 @@
                 
                 // 目标选项显示 - 修复：AI预测的队伍添加ai标识
                 const targetOptionHtml = bet.aiPredictedTeam && bet.highestOddsTeam.includes(bet.aiPredictedTeam)
-                    ? `${bet.highestOddsTeam} <span class="ai-tag">AI</span>`
+                    ? `${bet.highestOddsTeam} <span class="ai-tag">ai</span>`
                     : bet.highestOddsTeam;
                 
                 // 操作按钮
@@ -2236,63 +2237,74 @@
             
             // 初始化日志
             Logger.info("系统已加载，等待启动服务...");
-            
-            // 设置定时任务检查
-			            setupSchedules();
-            
-            // 绑定刷新间隔输入框事件
-            document.getElementById("refreshHoursInput").addEventListener("change", setRefreshInterval);
-            document.getElementById("refreshMinutesInput").addEventListener("change", setRefreshInterval);
-            document.getElementById("refreshSecondsInput").addEventListener("change", setRefreshInterval);
-            
-            // 初始化服务状态
-            updateServiceStatus();
-        };
-
-        // HTML调用的适配函数（保留window.placeBet名称）
-        window.placeBet = async function(betData) {
-            // 从字符串重建对象（处理HTML传递的字符串化对象）
-            const bet = typeof betData === 'string' ? JSON.parse(betData) : betData;
-            const index = pendingBets.findIndex(b => b.id === bet.id && b.status === "等待中");
-            
-            if (index !== -1) {
-                pendingBets[index].status = "处理中";
-                renderPendingBetsTable();
-                
-                // 调用重命名后的核心投注函数
-                const success = await placeCoreBet(bet);
-                pendingBets[index].status = success ? "已完成" : "失败";
-                renderPendingBetsTable();
-            } else {
-                // 处理直接调用的情况（非待投注列表中的项目）
-                Logger.info(`直接执行投注: 项目 #${bet.id}`);
-                const tempBet = { ...bet, status: "处理中" };
-                pendingBets.unshift(tempBet);
-                renderPendingBetsTable();
-                
-                const success = await placeCoreBet(bet);
-                tempBet.status = success ? "已完成" : "失败";
-                renderPendingBetsTable();
-                
-                // 3秒后移除临时项目（如果未自动刷新）
-                setTimeout(() => {
-                    const tempIndex = pendingBets.findIndex(b => b.id === bet.id && b.status === tempBet.status);
-                    if (tempIndex !== -1) {
-                        pendingBets.splice(tempIndex, 1);
-                        renderPendingBetsTable();
-                    }
-                }, 3000);
+			        // 绑定刷新间隔输入框事件
+        document.getElementById("refreshHoursInput").addEventListener("change", setRefreshInterval);
+        document.getElementById("refreshMinutesInput").addEventListener("change", setRefreshInterval);
+        document.getElementById("refreshSecondsInput").addEventListener("change", setRefreshInterval);
+        
+        // 绑定策略选择事件
+        document.getElementById("betStrategySelect").addEventListener("change", function() {
+            if (isServiceRunning) {
+                saveParameters();
             }
-        };
+        });
+        
+        // 绑定筛选选择事件
+        document.getElementById("pendingFilterSelect").addEventListener("change", function() {
+            if (isServiceRunning) {
+                saveParameters();
+                processPendingBets(true);
+            }
+        });
+        
+        // 初始化定时任务
+        setupSchedules();
+        
+        // 初始化服务状态
+        updateServiceStatus();
+    };
 
-        // 全局暴露其他必要函数（供HTML调用）
-        window.toggleLogModal = toggleLogModal;
-        window.startService = startService;
-        window.stopService = stopService;
-        window.toggleAutoRefresh = toggleAutoRefresh;
-        window.manualRefresh = manualRefresh;
-        window.saveParameters = saveParameters;
-        window.editPendingBetTime = editPendingBetTime;
-    </script>
+    // 手动触发投注
+    function placeBet(betData) {
+        const bet = pendingBets.find(b => b.id === betData.id);
+        if (!bet) return;
+        
+        bet.status = "处理中";
+        renderPendingBetsTable();
+        
+        (async () => {
+            let success = false;
+            if (bet.strategy === "follow" && betData.optionId) {
+                success = await placeFollowBet(bet, betData.optionId);
+            } else {
+                success = await placeCoreBet(bet);
+            }
+            
+            bet.status = success ? "已完成" : "失败";
+            renderPendingBetsTable();
+        })();
+    }
+
+    // 处理页面关闭前的提示
+    window.addEventListener('beforeunload', function(e) {
+        if (isServiceRunning) {
+            e.preventDefault();
+            e.returnValue = '服务正在运行中，确定要离开吗？';
+            return e.returnValue;
+        }
+    });
+
+    // 处理未捕获的异常
+    window.addEventListener('error', function(e) {
+        Logger.error(`未捕获异常: ${e.error.message}`, true);
+        console.error(e);
+    });
+
+    // 处理未捕获的异步异常
+    window.addEventListener('unhandledrejection', function(e) {
+        Logger.error(`未捕获异步异常: ${e.reason?.message || 'Unknown error'}`, true);
+        console.error(e);
+    });
+</script>
 </body>
 </html>

@@ -48,7 +48,7 @@
                 background-color: rgba(22, 93, 255, 0.03);
             }
             .odds-highlight {
-                background-color: rgba(82, 196, 26, 0.1);
+                /* 修复：删除绿色底色标记，保留加粗样式 */
                 font-weight: bold;
             }
             .follower-indicator {
@@ -72,6 +72,16 @@
             .scrollbar-thin::-webkit-scrollbar-thumb {
                 background-color: rgba(156, 163, 175, 0.5);
                 border-radius: 2px;
+            }
+            /* 新增：AI预测标识样式 */
+            .ai-tag {
+                display: inline-block;
+                background-color: rgba(123, 97, 255, 0.1);
+                color: #7B61FF;
+                font-size: 0.75rem;
+                padding: 0 4px;
+                border-radius: 2px;
+                margin-left: 4px;
             }
         }
     </style>
@@ -738,7 +748,9 @@
                                 highestOddsTeam: selectedOption ? selectedOption.text : 'N/A',
                                 ratioValue: ratioValue,
                                 recordedOdds: odds,
-                                aiPrediction: aiPrediction ? `${aiPrediction.prediction} (${(aiPrediction.confidence * 100).toFixed(1)}%)` : null
+                                aiPrediction: aiPrediction ? `${aiPrediction.prediction} (${(aiPrediction.confidence * 100).toFixed(1)}%)` : null,
+                                // 新增：标记AI预测的队伍
+                                aiPredictedTeam: aiPrediction ? aiPrediction.prediction : null
                             });
                         }
                     }
@@ -909,7 +921,9 @@
                         highestOddsTeam: option.text,
                         highestOdds: parseFloat(option.odds || 0),
                         ratioValue: 0,
-                        recordedOdds: 0
+                        recordedOdds: 0,
+                        // 新增：标记AI预测的队伍（跟随模式可能无AI预测）
+                        aiPredictedTeam: null
                     };
                     
                     // 添加到待投注列表
@@ -972,10 +986,10 @@
                 
                 const result = await request(url);
                 
-                // 修复1: 更全面的成功判断逻辑
+                // 修复1: 优化成功判断逻辑，解决实际成功但显示失败的问题
                 const isSuccess = result.code === 0 || 
-                                  (result.code === 1 && result.msg && result.msg.includes("成功")) ||
-                                  (result.msg && result.msg.includes("成功"));
+                                  result.code === 1 ||
+                                  (result.msg && (result.msg.includes("成功") || result.msg.includes("已下注") || result.msg.includes("投注成功")));
                 
                 if (!isSuccess) {
                     Logger.error(`跟随投注失败: ${result.msg || '未知错误'}`);
@@ -999,10 +1013,10 @@
                     
                     const result = await request(url);
                     
-                    // 修复1: 更全面的成功判断逻辑
+                    // 修复1: 优化成功判断逻辑
                     const isSuccess = result.code === 0 || 
-                                      (result.code === 1 && result.msg && result.msg.includes("成功")) ||
-                                      (result.msg && result.msg.includes("成功"));
+                                      result.code === 1 ||
+                                      (result.msg && (result.msg.includes("成功") || result.msg.includes("已下注") || result.msg.includes("投注成功")));
                     
                     if (!isSuccess) {
                         Logger.error(`备用服务器 - 跟随投注失败: ${result.msg || '未知错误'}`);
@@ -1321,10 +1335,10 @@
                     
                     const result = await request(url);
                     
-                    // 修复2: 更全面的成功判断逻辑
+                    // 修复2: 优化成功判断逻辑，解决实际成功但显示失败的问题
                     const isSuccess = result.code === 0 || 
-                                      (result.code === 1 && result.msg && result.msg.includes("成功")) ||
-                                      (result.msg && result.msg.includes("成功"));
+                                      result.code === 1 ||
+                                      (result.msg && (result.msg.includes("成功") || result.msg.includes("已下注") || result.msg.includes("投注成功")));
                     
                     if (!isSuccess) {
                         Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
@@ -1375,10 +1389,10 @@
                         
                         const result = await request(url);
                         
-                        // 修复2: 更全面的成功判断逻辑
+                        // 修复2: 优化成功判断逻辑
                         const isSuccess = result.code === 0 || 
-                                          (result.code === 1 && result.msg && result.msg.includes("成功")) ||
-                                          (result.msg && result.msg.includes("成功"));
+                                          result.code === 1 ||
+                                          (result.msg && (result.msg.includes("成功") || result.msg.includes("已下注") || result.msg.includes("投注成功")));
                         
                         if (!isSuccess) {
                             Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
@@ -1475,7 +1489,7 @@
             }
             
             saveParameters();
-            await loadBetItems();
+			      await loadBetItems();
             startAutoRefresh();
             startBetChecker();
             
@@ -1792,12 +1806,11 @@
                 CONFIG.state.followCheckInterval = Math.max(100, parseInt(document.getElementById("followCheckIntervalInput").value) || 500);
                 CONFIG.state.aiPredictionEnabled = document.getElementById("aiPredictionEnabledCheckbox").checked;
                 
-                // 保存定时任务配置
+                // 保存定时任务配置 - 修复：允许两组定时任务独立配置，互不干扰
                 CONFIG.state.schedule1Enabled = document.getElementById("schedule1EnabledCheckbox").checked;
                 CONFIG.state.schedule1StartTime = document.getElementById("schedule1StartTimeInput").value || "09:00";
                 CONFIG.state.schedule1StopTime = document.getElementById("schedule1StopTimeInput").value || "23:00";
                 
-                // 第二组定时任务配置
                 CONFIG.state.schedule2Enabled = document.getElementById("schedule2EnabledCheckbox").checked;
                 CONFIG.state.schedule2StartTime = document.getElementById("schedule2StartTimeInput").value || "00:00";
                 CONFIG.state.schedule2StopTime = document.getElementById("schedule2StopTimeInput").value || "06:00";
@@ -1821,7 +1834,7 @@
                 const hms = convertToHMS(CONFIG.state.refreshInterval);
                 Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 容忍时间: ${CONFIG.state.toleranceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
-                // 更新定时任务
+                // 更新定时任务 - 修复：独立处理两组定时任务，避免互相干扰
                 setupSchedules();
                 
                 if (isServiceRunning) {
@@ -1867,83 +1880,89 @@
             }
         }
 
-        // 设置定时任务
+        // 设置定时任务 - 修复：两组定时任务独立运行，互不干扰
         function setupSchedules() {
-            clearSchedules();
-            
-            // 设置第一组定时任务
+            // 分别处理两组定时任务，不互相覆盖
             if (CONFIG.state.schedule1Enabled) {
-                setupSchedule(1);
+                setupSingleSchedule(1);
+            } else if (scheduleTimers.check1) {
+                clearTimeout(scheduleTimers.check1);
+                scheduleTimers.check1 = null;
+                Logger.info("已清除第一组定时任务");
             }
             
-            // 设置第二组定时任务
             if (CONFIG.state.schedule2Enabled) {
-                setupSchedule(2);
+                setupSingleSchedule(2);
+            } else if (scheduleTimers.check2) {
+                clearTimeout(scheduleTimers.check2);
+                scheduleTimers.check2 = null;
+                Logger.info("已清除第二组定时任务");
             }
         }
 
-        // 设置单个定时任务
-        function setupSchedule(scheduleNumber) {
+        // 设置单个定时任务 - 独立处理每组任务逻辑
+        function setupSingleSchedule(scheduleNumber) {
             const configKey = `schedule${scheduleNumber}`;
+            const timerKey = `check${scheduleNumber}`;
+            
+            // 先清除已有定时器，避免重复
+            if (scheduleTimers[timerKey]) {
+                clearTimeout(scheduleTimers[timerKey]);
+                scheduleTimers[timerKey] = null;
+            }
             
             Logger.info(`已启用第${scheduleNumber}组定时任务 - 启动时间: ${CONFIG.state[`${configKey}StartTime`]}, 停止时间: ${CONFIG.state[`${configKey}StopTime`]}`);
             
-            // 计算今天的启动和停止时间
+            // 计算启动和停止时间（分钟数）
             const [startHours, startMinutes] = CONFIG.state[`${configKey}StartTime`].split(':').map(Number);
             const [stopHours, stopMinutes] = CONFIG.state[`${configKey}StopTime`].split(':').map(Number);
+            const startTime = startHours * 60 + startMinutes;
+            const stopTime = stopHours * 60 + stopMinutes;
             
-            // 设置每日检查定时器
+            // 定时检查逻辑
             const checkSchedule = () => {
+                // 检查当前配置是否仍启用，避免已取消但定时器仍运行
+                if (!CONFIG.state[`${configKey}Enabled`]) {
+                    clearTimeout(scheduleTimers[timerKey]);
+                    scheduleTimers[timerKey] = null;
+                    Logger.info(`第${scheduleNumber}组定时任务已被禁用，停止检查`);
+                    return;
+                }
+                
                 const now = new Date();
                 const currentTime = now.getHours() * 60 + now.getMinutes();
-                const startTime = startHours * 60 + startMinutes;
-                const stopTime = stopHours * 60 + stopMinutes;
                 
                 // 判断当前是否在运行时间段内
-                const shouldBeRunning = stopTime > startTime 
-                    ? currentTime >= startTime && currentTime < stopTime
-                    : currentTime >= startTime || currentTime < stopTime;
+                const isInTimeRange = stopTime > startTime 
+                    ? (currentTime >= startTime && currentTime < stopTime)
+                    : (currentTime >= startTime || currentTime < stopTime);
                 
-                // 根据判断结果启动或停止服务
-                if (shouldBeRunning && !isServiceRunning) {
+                // 执行对应操作
+                if (isInTimeRange && !isServiceRunning) {
                     Logger.info(`第${scheduleNumber}组定时任务 - 到达启动时间(${CONFIG.state[`${configKey}StartTime`]})，自动启动服务`);
                     startService();
-                } else if (!shouldBeRunning && isServiceRunning) {
+                } else if (!isInTimeRange && isServiceRunning) {
                     Logger.info(`第${scheduleNumber}组定时任务 - 到达停止时间(${CONFIG.state[`${configKey}StopTime`]})，自动停止服务`);
                     stopService();
-                    // 修复3: 停止服务后自动取消当前组定时任务的勾选状态并清除定时器
-                    const checkbox = document.getElementById(`schedule${scheduleNumber}EnabledCheckbox`);
+                    
+                    // 修复：服务停止后自动取消当前组定时任务勾选并清除定时器
+                    const checkbox = document.getElementById(`${configKey}EnabledCheckbox`);
                     if (checkbox) {
                         checkbox.checked = false;
                         CONFIG.state[`${configKey}Enabled`] = false;
                     }
-                    clearTimeout(scheduleTimers[`check${scheduleNumber}`]);
-                    scheduleTimers[`check${scheduleNumber}`] = null;
-                } else {
-                    // 不在时间段内且未运行，继续等待
-                    scheduleTimers[`check${scheduleNumber}`] = setTimeout(checkSchedule, 5000);
+                    clearTimeout(scheduleTimers[timerKey]);
+                    scheduleTimers[timerKey] = null;
+                    Logger.info(`第${scheduleNumber}组定时任务已自动禁用并清除`);
+                    return;
                 }
+                
+                // 5秒后再次检查，确保时间准确性
+                scheduleTimers[timerKey] = setTimeout(checkSchedule, 5000);
             };
             
-            // 立即执行一次检查
+            // 立即执行一次检查，并设置后续定时
             checkSchedule();
-        }
-
-        // 清除所有定时任务
-        function clearSchedules() {
-            // 清除第一组定时任务
-            if (scheduleTimers.check1) {
-                clearTimeout(scheduleTimers.check1);
-                scheduleTimers.check1 = null;
-            }
-            
-            // 清除第二组定时任务
-            if (scheduleTimers.check2) {
-                clearTimeout(scheduleTimers.check2);
-                scheduleTimers.check2 = null;
-            }
-            
-            Logger.info("所有定时任务已清除");
         }
 
         function updateServiceStatus() {
@@ -1970,7 +1989,7 @@
             }
         }
 
-        // 渲染可投注项目表格
+        // 渲染可投注项目表格 - 修复：AI预测队伍添加ai标识
         function renderBetTable() {
             const table = document.getElementById("betItemsTable");
             if (!table) return;
@@ -2005,6 +2024,7 @@
                 const pendingItem = pendingBets.find(bet => bet.id === item.id);
                 const highestOption = getHighestOddsOption(item);
                 const aiPrediction = AIAnalytics.predictionCache[item.id];
+                const aiPredictedTeam = aiPrediction ? aiPrediction.prediction : null;
                 
                 let status = "可投注";
                 let statusClass = "text-gray-600";
@@ -2042,13 +2062,17 @@
                     }
                 }
                 
-                // 选项列表HTML
+                // 选项列表HTML - 修复：AI预测的队伍添加ai标识
                 let optionsHtml = "";
                 item.optionsList.forEach(opt => {
                     const isHighest = highestOption && opt.id === highestOption.id;
+                    const isAiPredicted = aiPredictedTeam && opt.text.includes(aiPredictedTeam);
+                    
                     optionsHtml += `
                         <div class="${isHighest ? 'odds-highlight' : ''}">
-                            ${opt.text} (${opt.odds})
+                            ${opt.text} 
+                            ${isAiPredicted ? '<span class="ai-tag">AI</span>' : ''}
+                            (${opt.odds})
                         </div>
                     `;
                 });
@@ -2081,7 +2105,7 @@
             table.innerHTML = html;
         }
 
-        // 渲染待投注项目表格
+        // 渲染待投注项目表格 - 修复：AI预测的队伍添加ai标识
         function renderPendingBetsTable() {
             const table = document.getElementById("pendingBetsTable");
             if (!table) return;
@@ -2129,6 +2153,11 @@
                         break;
                 }
                 
+                // 目标选项显示 - 修复：AI预测的队伍添加ai标识
+                const targetOptionHtml = bet.aiPredictedTeam && bet.highestOddsTeam.includes(bet.aiPredictedTeam)
+                    ? `${bet.highestOddsTeam} <span class="ai-tag">AI</span>`
+                    : bet.highestOddsTeam;
+                
                 // 操作按钮
                 let actionBtn = "";
                 if (bet.status === "等待中") {
@@ -2149,7 +2178,7 @@
                             <div>${bet.heading}</div>
                             <div class="text-gray-500">${bet.undertext || ''}</div>
                         </td>
-                        <td class="border border-gray-200 p-3">${bet.highestOddsTeam}</td>
+                        <td class="border border-gray-200 p-3">${targetOptionHtml}</td>
                         <td class="border border-gray-200 p-3">${bet.highestOdds}</td>
                         <td class="border border-gray-200 p-3">${bet.betAmount}</td>
                         <td class="border border-gray-200 p-3">${bet.betTime.toLocaleString()}</td>
@@ -2204,7 +2233,7 @@
             // 初始化日志
             Logger.info("系统已加载，等待启动服务...");
             
-            // 设置定时任务检查
+            // 设置定时任务检查 - 修复：初始加载时独立启动两组定时任务检查
             setupSchedules();
         };
     </script>

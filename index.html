@@ -1255,8 +1255,8 @@
             return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
         }
 
-        // 执行投注操作
-        async function placeBet(betItem) {
+        // 核心投注逻辑函数（重命名，避免冲突）
+        async function placeCoreBet(betItem) {
             updateLastActivity();
             try {
                 Logger.info(`开始为项目 #${betItem.id} 下注，策略: ${CONFIG.state.betStrategy}, 金额: ${betItem.betAmount}`);
@@ -1451,7 +1451,7 @@
                     renderPendingBetsTable();
                     
                     (async () => {
-                        const success = await placeBet(bet);
+                        const success = await placeCoreBet(bet);
                         bet.status = success ? "已完成" : "失败";
                         renderPendingBetsTable();
                     })();
@@ -2237,110 +2237,62 @@
             // 初始化日志
             Logger.info("系统已加载，等待启动服务...");
             
-            // 设置定时任务检查 - 修复：
-			            // 初始化定时任务检查
-            setupSchedules();
+            // 设置定时任务检查
+			            setupSchedules();
             
-            // 为刷新时间输入框添加事件监听
+            // 绑定刷新间隔输入框事件
             document.getElementById("refreshHoursInput").addEventListener("change", setRefreshInterval);
             document.getElementById("refreshMinutesInput").addEventListener("change", setRefreshInterval);
             document.getElementById("refreshSecondsInput").addEventListener("change", setRefreshInterval);
             
-            // 为投注策略选择框添加事件监听
-            document.getElementById("betStrategySelect").addEventListener("change", function() {
-                if (isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            // 为待投注筛选选择框添加事件监听
-            document.getElementById("pendingFilterSelect").addEventListener("change", function() {
-                if (isServiceRunning) {
-                    saveParameters();
-                    processPendingBets(true);
-                }
-            });
-            
-            // 为AI预测开关添加事件监听
-            document.getElementById("aiPredictionEnabledCheckbox").addEventListener("change", function() {
-                if (isServiceRunning) {
-                    saveParameters();
-                    // 重新分析所有当前项目
-                    CONFIG.state.availableBets.forEach(betitem => {
-                        if (CONFIG.state.betStrategy !== "follow") {
-                            analyzeWithAI(betitem);
-                        }
-                    });
-                }
-            });
-            
-            // 为定时任务复选添加事件监听
-            document.getElementById("schedule1EnabledCheckbox").addEventListener("change", function() {
-                saveParameters();
-            });
-            
-            document.getElementById("schedule2EnabledCheckbox").addEventListener("change", function() {
-                saveParameters();
-            });
-            
-            document.getElementById("schedule1StartTimeInput").addEventListener("change", function() {
-                if (CONFIG.state.schedule1Enabled && isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            document.getElementById("schedule1StopTimeInput").addEventListener("change", function() {
-                if (CONFIG.state.schedule1Enabled && isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            document.getElementById("schedule2StartTimeInput").addEventListener("change", function() {
-                if (CONFIG.state.schedule2Enabled && isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            document.getElementById("schedule2StopTimeInput").addEventListener("change", function() {
-                if (CONFIG.state.schedule2Enabled && isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            // 窗口关闭前提示
-            window.addEventListener('beforeunload', function(e) {
-                if (isServiceRunning) {
-                    e.preventDefault();
-                    e.returnValue = '服务正在运行中，确定要离开吗？';
-                    return e.returnValue;
-                }
-            });
-            
-            // 初始化服务状态显示
+            // 初始化服务状态
             updateServiceStatus();
         };
 
-        // 暴露全局函数，确保HTML中可以调用
+        // HTML调用的适配函数（保留window.placeBet名称）
+        window.placeBet = async function(betData) {
+            // 从字符串重建对象（处理HTML传递的字符串化对象）
+            const bet = typeof betData === 'string' ? JSON.parse(betData) : betData;
+            const index = pendingBets.findIndex(b => b.id === bet.id && b.status === "等待中");
+            
+            if (index !== -1) {
+                pendingBets[index].status = "处理中";
+                renderPendingBetsTable();
+                
+                // 调用重命名后的核心投注函数
+                const success = await placeCoreBet(bet);
+                pendingBets[index].status = success ? "已完成" : "失败";
+                renderPendingBetsTable();
+            } else {
+                // 处理直接调用的情况（非待投注列表中的项目）
+                Logger.info(`直接执行投注: 项目 #${bet.id}`);
+                const tempBet = { ...bet, status: "处理中" };
+                pendingBets.unshift(tempBet);
+                renderPendingBetsTable();
+                
+                const success = await placeCoreBet(bet);
+                tempBet.status = success ? "已完成" : "失败";
+                renderPendingBetsTable();
+                
+                // 3秒后移除临时项目（如果未自动刷新）
+                setTimeout(() => {
+                    const tempIndex = pendingBets.findIndex(b => b.id === bet.id && b.status === tempBet.status);
+                    if (tempIndex !== -1) {
+                        pendingBets.splice(tempIndex, 1);
+                        renderPendingBetsTable();
+                    }
+                }, 3000);
+            }
+        };
+
+        // 全局暴露其他必要函数（供HTML调用）
+        window.toggleLogModal = toggleLogModal;
         window.startService = startService;
         window.stopService = stopService;
         window.toggleAutoRefresh = toggleAutoRefresh;
         window.manualRefresh = manualRefresh;
         window.saveParameters = saveParameters;
-        window.toggleLogModal = toggleLogModal;
         window.editPendingBetTime = editPendingBetTime;
-        window.placeBet = async function(betData) {
-            // 从字符串重建对象（因为HTML中传递的是字符串化的对象）
-            const bet = typeof betData === 'string' ? JSON.parse(betData) : betData;
-            const index = pendingBets.findIndex(b => b.id === bet.id && b.status === "等待中");
-            if (index !== -1) {
-                pendingBets[index].status = "处理中";
-                renderPendingBetsTable();
-                
-                const success = await placeBet(bet);
-                pendingBets[index].status = success ? "已完成" : "失败";
-                renderPendingBetsTable();
-            }
-        };
     </script>
 </body>
 </html>

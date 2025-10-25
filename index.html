@@ -257,70 +257,63 @@
             }
         }
 
-        // API验证逻辑 - 3.修复验证后流程：刷新数据→延迟4秒启动5分钟检测async function verifyApiKey() {
-    const apiKey = document.getElementById("apiKeyInput").value;
-    if (!apiKey) {
-        Logger.warning("请输入API Key");
-        return false;
-    }
-
-    try {
-        Logger.info("正在验证API Key（通过获取投注列表）...");
-        const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
-        if (result && (result.data || result.code === 0)) {
-            Logger.info("API Key验证成功");
-            
-            // 验证成功后自动刷新一次数据（核心逻辑）
-            Logger.info("API验证成功，开始自动刷新可投注项目...");
-            const refreshSuccess = await loadBetItems(); // 等待数据刷新完成
-            if (!refreshSuccess) {
-                Logger.warning("API验证成功，但数据刷新失败，将重试一次...");
-                await loadBetItems(); // 重试一次，确保数据加载
-            }
-            
-            // 延迟4秒后启动5分钟自动检测机制
-            setTimeout(() => {
-                Logger.info("API验证后延迟4秒，启动5分钟自动检测机制");
-                startFiveMinCheckTimer();
-            }, 4000);
-            
-            return true;
-        } else {
-            Logger.error(`API Key验证失败: 响应格式不正确`);
-            return false;
-        }
-    } catch (e) {
-        Logger.warning("主服务器验证失败，尝试备用服务器...");
-        try {
-            const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
-            if (result && (result.data || result.code === 0)) {
-                Logger.info("备用服务器API Key验证成功");
-                
-                // 验证成功后自动刷新一次数据（核心逻辑）
-                Logger.info("备用服务器API验证成功，开始自动刷新可投注项目...");
-                const refreshSuccess = await loadBetItems(); // 等待数据刷新完成
-                if (!refreshSuccess) {
-                    Logger.warning("备用服务器API验证成功，但数据刷新失败，将重试一次...");
-                    await loadBetItems(); // 重试一次
-                }
-                
-                // 延迟4秒后启动5分钟自动检测机制
-                setTimeout(() => {
-                    Logger.info("API验证后延迟4秒，启动5分钟自动检测机制");
-                    startFiveMinCheckTimer();
-                }, 4000);
-                
-                return true;
-            } else {
-                Logger.error(`备用服务器API Key验证失败: 响应格式不正确`);
+        // API验证逻辑 - 3.修复验证后流程：刷新数据→延迟4秒启动5分钟检测
+        async function verifyApiKey() {
+            const apiKey = document.getElementById("apiKeyInput").value;
+            if (!apiKey) {
+                Logger.warning("请输入API Key");
                 return false;
             }
-        } catch (e2) {
-            Logger.error(`API Key验证失败: ${e2.message}`);
-            return false;
+
+            try {
+                Logger.info("正在验证API Key（通过获取投注列表）...");
+                const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
+                if (result && (result.data || result.code === 0)) {
+                    Logger.info("API Key验证成功");
+                    
+                    // 3.验证成功后自动刷新一次数据
+                    Logger.info("API验证成功，自动刷新可投注项目...");
+                    await loadBetItems();
+                    
+                    // 3.延迟4秒后启动5分钟自动检测机制
+                    setTimeout(() => {
+                        Logger.info("API验证后延迟4秒，启动5分钟自动检测机制");
+                        startFiveMinCheckTimer();
+                    }, 4000);
+                    
+                    return true;
+                } else {
+                    Logger.error(`API Key验证失败: 响应格式不正确`);
+                    return false;
+                }
+            } catch (e) {
+                Logger.warning("主服务器验证失败，尝试备用服务器...");
+                try {
+                    const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
+                    if (result && (result.data || result.code === 0)) {
+                        Logger.info("备用服务器API Key验证成功");
+                        
+                        // 3.验证成功后自动刷新一次数据
+                        Logger.info("备用服务器API验证成功，自动刷新可投注项目...");
+                        await loadBetItems();
+                        
+                        // 3.延迟4秒后启动5分钟自动检测机制
+                        setTimeout(() => {
+                            Logger.info("API验证后延迟4秒，启动5分钟自动检测机制");
+                            startFiveMinCheckTimer();
+                        }, 4000);
+                        
+                        return true;
+                    } else {
+                        Logger.error(`备用服务器API Key验证失败: 响应格式不正确`);
+                        return false;
+                    }
+                } catch (e2) {
+                    Logger.error(`API Key验证失败: ${e2.message}`);
+                    return false;
+                }
+            }
         }
-    }
-}
 
         // 获取可投注项目 - 保留原逻辑
         async function loadBetItems() {
@@ -903,188 +896,201 @@
             const randomOffset = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
             return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
         }
-// 执行投注操作 - 4.修复投注后流程：停止服务→延迟1分钟→延迟10秒启动5分钟检测
-async function placeBet(betItem) {
+
+        // 执行投注操作 - 4.修复投注后流程：停止服务→延迟1分钟→延迟10秒启动5分钟检测
+      async function placeBet(betItem) {
     updateLastActivity();
     isBettingInProgress = true; // 标记投注开始
     try {
-        Logger.info(`开始为项目 #${betItem.id} 下注，策略: ${CONFIG.state.betStrategy}, 金额: ${betItem.betAmount}`);
+        // 主逻辑...
         
-        let choices = [];
-        let myBonuses = [];
-        let currentOdds = 0;
-
-        if (CONFIG.state.betStrategy === "higher_odds") {
-            const freshBetItem = CONFIG.state.availableBets.find(item => item.id === betItem.id);
-            if (!freshBetItem) {
-                Logger.error(`项目 #${betItem.id} 已失效，取消投注`);
-                isBettingInProgress = false;
-                return false;
-            }
-            
-            const aiPrediction = AIAnalytics.predictionCache[betItem.id];
-            let selectedOption;
-            
-            if (aiPrediction && CONFIG.state.aiPredictionEnabled) {
-                selectedOption = freshBetItem.optionsList.find(opt => 
-                    opt.text.includes(aiPrediction.prediction)
-                );
-                Logger.info(`使用AI预测结果投注: ${aiPrediction.prediction} (可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%)`, true);
-            }
-            
-            if (!selectedOption) {
-                selectedOption = getHighestOddsOption(freshBetItem);
-            }
-            
-            if (!selectedOption) {
-                Logger.error(`项目 #${betItem.id} 没有找到有效选项`);
-                isBettingInProgress = false;
-                return false;
-            }
-            
-            currentOdds = parseFloat(selectedOption.odds);
-            choices = [selectedOption.id];
-            myBonuses = [calculateBetAmount()];
-            Logger.info(`投注: 选项 ${selectedOption.text} (赔率: ${selectedOption.odds}), 金额 ${myBonuses[0]}`, true);
-        }
-        else if (CONFIG.state.betStrategy === "larger") {
-            choices = await getLargerOptions(betItem.id);
-            if (choices.length === 0) {
-                Logger.error(`项目 #${betItem.id} 没有符合押大策略的选项`);
-                isBettingInProgress = false;
-                return false;
-            }
-            
-            choices.forEach(() => {
-                myBonuses.push(calculateBetAmount());
-            });
-        } 
-        else if (CONFIG.state.betStrategy === "smaller") {
-            choices = await getSmallerOptions(betItem.id);
-            if (choices.length === 0) {
-                Logger.error(`项目 #${betItem.id} 没有符合押小策略的选项`);
-                isBettingInProgress = false;
-                return false;
-            }
-            
-            choices.forEach(() => {
-                myBonuses.push(calculateBetAmount());
-            });
+        // 1. 主服务器投注失败分支
+        if (result.code !== 0) {
+            Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+            isBettingInProgress = false; // 新增：重置状态
+            return false;
         }
         
-        for (let i = 0; i < choices.length; i++) {
-            const optId = choices[i];
-            const bonus = myBonuses[i];
-            
-            if (GlobalInfo.bet_mask[betItem.id]?.includes(optId)) {
-                Logger.info(`选项 ${optId} 已投注，跳过`, true);
-                continue;
-            }
-            
-            const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
-                .replace('{optId}', optId)
-                .replace('{bonus}', bonus)}`;
-            
-            const result = await request(url);
-            
-            if (result.code !== 0) {
-                Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
-                isBettingInProgress = false;
-                return false;
-            }
-            
-            Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
-            
-            if (!GlobalInfo.bet_mask[betItem.id]) {
-                GlobalInfo.bet_mask[betItem.id] = [];
-            }
-            GlobalInfo.bet_mask[betItem.id].push(optId);
-            
-            if (i < choices.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
-            }
+        // 2. 备用服务器投注失败分支
+        if (result.code !== 0) {
+            Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+            isBettingInProgress = false; // 新增：重置状态
+            return false;
         }
         
-        Logger.info(`项目 #${betItem.id} 下注成功`);
-        AudioPlayer.playBetSuccess();
-        Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
-        setTimeout(() => loadBetItems(), 3000);
-        
-        // 4.投注成功后：延迟1分钟停止服务→延迟10秒启动5分钟检测
-        setTimeout(() => {
-            Logger.info("投注完成后延迟1分钟，停止服务");
-            stopService();
-            
-            // 延迟10秒启动5分钟检测
-            setTimeout(() => {
-                Logger.info("停止服务后延迟10秒，重启5分钟自动检测机制");
-                startFiveMinCheckTimer();
-                isBettingInProgress = false;
-            }, 10000);
-        }, 60000);
-        
-        return true;
-    } catch (e) {
-        Logger.warning("主服务器下注失败，尝试备用服务器...");
-        try {
-            for (let i = 0; i < choices.length; i++) {
-                const optId = choices[i];
-                const bonus = myBonuses[i];
-                
-                if (GlobalInfo.bet_mask[betItem.id]?.includes(optId)) {
-                    continue;
+        // 3. 最终捕获异常分支
+    } catch (e2) {
+        Logger.error(`项目 #${betItem.id} 下注请求失败: ${e2.message}`);
+        isBettingInProgress = false; // 确保重置状态
+        return false;
+    }
+}
+                        return false;
+                    }
+                    
+                    const aiPrediction = AIAnalytics.predictionCache[betItem.id];
+                    let selectedOption;
+                    
+                    if (aiPrediction && CONFIG.state.aiPredictionEnabled) {
+                        selectedOption = freshBetItem.optionsList.find(opt => 
+                            opt.text.includes(aiPrediction.prediction)
+                        );
+                        Logger.info(`使用AI预测结果投注: ${aiPrediction.prediction} (可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%)`, true);
+                    }
+                    
+                    if (!selectedOption) {
+                        selectedOption = getHighestOddsOption(freshBetItem);
+                    }
+                    
+                    if (!selectedOption) {
+                        Logger.error(`项目 #${betItem.id} 没有找到有效选项`);
+                        isBettingInProgress = false;
+                        return false;
+                    }
+                    
+                    currentOdds = parseFloat(selectedOption.odds);
+                    choices = [selectedOption.id];
+                    myBonuses = [calculateBetAmount()];
+                    Logger.info(`投注: 选项 ${selectedOption.text} (赔率: ${selectedOption.odds}), 金额 ${myBonuses[0]}`, true);
+                }
+                else if (CONFIG.state.betStrategy === "larger") {
+                    choices = await getLargerOptions(betItem.id);
+                    if (choices.length === 0) {
+                        Logger.error(`项目 #${betItem.id} 没有符合押大策略的选项`);
+                        isBettingInProgress = false;
+                        return false;
+                    }
+                    
+                    choices.forEach(() => {
+                        myBonuses.push(calculateBetAmount());
+                    });
+                } 
+                else if (CONFIG.state.betStrategy === "smaller") {
+                    choices = await getSmallerOptions(betItem.id);
+                    if (choices.length === 0) {
+                        Logger.error(`项目 #${betItem.id} 没有符合押小策略的选项`);
+                        isBettingInProgress = false;
+                        return false;
+                    }
+                    
+                    choices.forEach(() => {
+                        myBonuses.push(calculateBetAmount());
+                    });
                 }
                 
-                const url = `${CONFIG.testHost}/${CONFIG.apis.betgameOdds
-                    .replace('{optId}', optId)
-                    .replace('{bonus}', bonus)}`;
+                for (let i = 0; i < choices.length; i++) {
+                    const optId = choices[i];
+                    const bonus = myBonuses[i];
+                    
+                    if (GlobalInfo.bet_mask[betItem.id]?.includes(optId)) {
+                        Logger.info(`选项 ${optId} 已投注，跳过`, true);
+                        continue;
+                    }
+                    
+                    const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
+                        .replace('{optId}', optId)
+                        .replace('{bonus}', bonus)}`;
+                    
+                    const result = await request(url);
+                    
+                    if (result.code !== 0) {
+                        Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                        isBettingInProgress = false;
+                        return false;
+                    }
+                    
+                    Logger.info(`项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
+                    
+                    if (!GlobalInfo.bet_mask[betItem.id]) {
+                        GlobalInfo.bet_mask[betItem.id] = [];
+                    }
+                    GlobalInfo.bet_mask[betItem.id].push(optId);
+                    
+                    if (i < choices.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
+                    }
+                }
                 
-                const result = await request(url);
+                Logger.info(`项目 #${betItem.id} 下注成功`);
+                AudioPlayer.playBetSuccess();
+                Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
+                setTimeout(() => loadBetItems(), 3000);
                 
-                if (result.code !== 0) {
-                    Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                // 4.投注成功后：延迟1分钟停止服务→延迟10秒启动5分钟检测
+                setTimeout(() => {
+                    Logger.info("投注完成后延迟1分钟，停止服务");
+                    stopService();
+                    
+                    // 延迟10秒启动5分钟检测
+                    setTimeout(() => {
+                        Logger.info("停止服务后延迟10秒，重启5分钟自动检测机制");
+                        startFiveMinCheckTimer();
+                        isBettingInProgress = false;
+                    }, 10000);
+                }, 60000);
+                
+                return true;
+            } catch (e) {
+                Logger.warning("主服务器下注失败，尝试备用服务器...");
+                try {
+                    for (let i = 0; i < choices.length; i++) {
+                        const optId = choices[i];
+                        const bonus = myBonuses[i];
+                        
+                        if (GlobalInfo.bet_mask[betItem.id]?.includes(optId)) {
+                            continue;
+                        }
+                        
+                        const url = `${CONFIG.testHost}/${CONFIG.apis.betgameOdds
+                            .replace('{optId}', optId)
+                            .replace('{bonus}', bonus)}`;
+                        
+                        const result = await request(url);
+                        
+                        if (result.code !== 0) {
+                            Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
+                            isBettingInProgress = false;
+                            return false;
+                        }
+                        
+                        Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
+                        
+                        if (!GlobalInfo.bet_mask[betItem.id]) {
+                            GlobalInfo.bet_mask[betItem.id] = [];
+                        }
+                        GlobalInfo.bet_mask[betItem.id].push(optId);
+                        
+                        if (i < choices.length - 1) {
+                            await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
+                        }
+                    }
+                    
+                    Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
+                    AudioPlayer.playBetSuccess();
+                    Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
+                    setTimeout(() => loadBetItems(), 3000);
+                    
+                    // 4.投注成功后：延迟1分钟停止服务→延迟10秒启动5分钟检测
+                    setTimeout(() => {
+                        Logger.info("投注完成后延迟1分钟，停止服务");
+                        stopService();
+                        
+                        // 延迟10秒启动5分钟检测
+                        setTimeout(() => {
+                            Logger.info("停止服务后延迟10秒，重启5分钟自动检测机制");
+                            startFiveMinCheckTimer();
+                            isBettingInProgress = false;
+                        }, 10000);
+                    }, 60000);
+                    
+                    return true;
+                } catch (e2) {
+                    Logger.error(`项目 #${betItem.id} 下注请求失败: ${e2.message}`);
                     isBettingInProgress = false;
                     return false;
                 }
-                
-                Logger.info(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 下注成功: ${JSON.stringify(result)}`);
-                
-                if (!GlobalInfo.bet_mask[betItem.id]) {
-                    GlobalInfo.bet_mask[betItem.id] = [];
-                }
-                GlobalInfo.bet_mask[betItem.id].push(optId);
-                
-                if (i < choices.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
-                }
             }
-            
-            Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
-            AudioPlayer.playBetSuccess();
-            Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
-            setTimeout(() => loadBetItems(), 3000);
-            
-            // 4.投注成功后：延迟1分钟停止服务→延迟10秒启动5分钟检测
-            setTimeout(() => {
-                Logger.info("投注完成后延迟1分钟，停止服务");
-                stopService();
-                
-                // 延迟10秒启动5分钟检测
-                setTimeout(() => {
-                    Logger.info("停止服务后延迟10秒，重启5分钟自动检测机制");
-                    startFiveMinCheckTimer();
-                    isBettingInProgress = false;
-                }, 10000);
-            }, 60000);
-            
-            return true;
-        } catch (e2) {
-            Logger.error(`项目 #${betItem.id} 下注请求失败: ${e2.message}`);
-            isBettingInProgress = false;
-            return false;
         }
-    }
-}
 
         // 检查并执行待下注项目 - 保留原逻辑
         function checkAndPlaceBets() {
@@ -1194,41 +1200,40 @@ async function placeBet(betItem) {
 
         // 服务控制函数 - 新增服务启动来源标记
         let isServiceStartedByCheck = false; // 标记服务是否由检测机制启动
-       async function startService(isFromCheck = false) {
-    if (isServiceRunning) {
-        Logger.warning("服务已在运行中");
-        return;
-    }
-    
-    Logger.info("开始验证API Key并准备启动服务...");
-    const apiValid = await verifyApiKey(); // 等待API验证+验证后的数据刷新完成
-    if (!apiValid) {
-        Logger.error("API Key验证失败，无法启动服务");
-        return;
-    }
-    
-    isServiceStartedByCheck = isFromCheck; 
-    saveParameters();
-    // ✅ 移除重复的await loadBetItems()，避免覆盖验证后的刷新结果
-    
-    // 如果是手动启动，启动自动刷新和5分钟检测
-    if (!isFromCheck) {
-        startAutoRefresh();
-        startFiveMinCheckTimer();
-    }
-    
-    startBetChecker();
-    resetRefreshCycle();
-    
-    isPageVisible = true;
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    isServiceRunning = true;
-    updateServiceStatus();
-    Logger.info(isFromCheck 
-        ? "服务已由5分钟检测机制自动启动" 
-        : "服务已手动启动");
-}
+        async function startService(isFromCheck = false) {
+            if (isServiceRunning) {
+                Logger.warning("服务已在运行中");
+                return;
+            }
+            
+            const apiValid = await verifyApiKey();
+            if (!apiValid) {
+                Logger.error("API Key验证失败，无法启动服务");
+                return;
+            }
+            
+            isServiceStartedByCheck = isFromCheck; // 设置启动来源标记
+            saveParameters();
+            await loadBetItems();
+            
+            // 如果是手动启动，启动自动刷新和5分钟检测
+            if (!isFromCheck) {
+                startAutoRefresh();
+                startFiveMinCheckTimer();
+            }
+            
+            startBetChecker();
+            resetRefreshCycle();
+            
+            isPageVisible = true;
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            
+            isServiceRunning = true;
+            updateServiceStatus();
+            Logger.info(isFromCheck 
+                ? "服务已由5分钟检测机制自动启动" 
+                : "服务已手动启动");
+        }
 
         // 停止服务 - 保留原逻辑
         function stopService() {

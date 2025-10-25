@@ -199,7 +199,7 @@
             }
         };
 
-        // 配置 - 恢复基础金额和波动范围可修改性
+        // 配置 - 1.删除容忍秒数 2.删除赔率阈值 3.修改基础金额/金额波动范围
         const CONFIG = {
             mainHost: "https://api.m-team.io/api",
             testHost: "https://test2.m-team.cc/api",
@@ -209,31 +209,33 @@
                 "get_details": "bet/getDetail?gameId={gameId}",
                 "get_gamblers": "bet/getDetailBetList?gameId={gameId}",
                 "get_my_bet_log": "bet/myCouponLog",
-                "get_team_history": "team/getHistory?teamId={teamId}"
+                "get_team_history": "team/getHistory?teamId={teamId}" // 新增：获取队伍历史数据
             },
             state: {
                 availableBets: [],
                 autoRefresh: true,
                 refreshInterval: 30,
                 targetUserId: "205809",
-                advanceSeconds: 3, // 提前下注时间
-                amountRange: 100, // 金额波动范围（用户可修改）
-                baseAmount: 1000, // 基础金额（用户可修改）
+                advanceSeconds: 3, // 保留提前下注时间
+                // 1.删除容忍秒数配置
+                amountRange: 100, // 3.修改金额波动范围为100
+                baseAmount: 1000, // 3.修改基础金额为1000
                 betStrategy: "higher_odds",
                 checkInterval: 2,
                 detailedLogMode: false,
+                // 2.删除赔率阈值配置
                 pendingFilter: "all",
-                aiPredictionEnabled: true,
-                followCheckInterval: 500,
-                // 定时任务配置
+                aiPredictionEnabled: true, // 新增：AI预测开关
+                followCheckInterval: 500, // 新增：跟随模式检查间隔(毫秒)
+                // 新增定时任务配置
                 scheduleEnabled: false,
                 scheduleStartTime: "09:00",
                 scheduleStopTime: "23:00"
             }
         };
 
-        // 核心请求函数 - 修复API验证逻辑
-        async function request(url, method = 'get', data = {}, retry = 1) {
+        // 核心请求函数 - 保留原逻辑
+        async function request(url, method = 'post', data = {}, retry = 1) {
             try {
                 const response = await axios({
                     method,
@@ -257,7 +259,7 @@
             }
         }
 
-        // API验证逻辑 - 修复验证流程
+        // API验证逻辑 - 保留原逻辑
         async function verifyApiKey() {
             const apiKey = document.getElementById("apiKeyInput").value;
             if (!apiKey) {
@@ -267,8 +269,7 @@
 
             try {
                 Logger.info("正在验证API Key（通过获取投注列表）...");
-                // 修复：使用GET方法验证API（符合多数API设计）
-                const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`, 'get');
+                const result = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
                 if (result && (result.data || result.code === 0)) {
                     Logger.info("API Key验证成功");
                     return true;
@@ -279,7 +280,7 @@
             } catch (e) {
                 Logger.warning("主服务器验证失败，尝试备用服务器...");
                 try {
-                    const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`, 'get');
+                    const result = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
                     if (result && (result.data || result.code === 0)) {
                         Logger.info("备用服务器API Key验证成功");
                         return true;
@@ -294,12 +295,12 @@
             }
         }
 
-        // 获取可投注项目
+        // 获取可投注项目 - 保留原逻辑
         async function loadBetItems() {
             updateLastActivity();
             try {
                 Logger.info("正在获取可投注项目...", true);
-                const data = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`, 'get');
+                const data = await request(`${CONFIG.mainHost}/${CONFIG.apis.get_current_bet}`);
                 CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
                 GlobalInfo.available_bets = CONFIG.state.availableBets;
                 
@@ -315,12 +316,12 @@
                         });
                     }
                     
-                    // AI分析
+                    // 如果是AI模式，获取队伍历史数据并进行分析
                     if (CONFIG.state.betStrategy !== "follow" && CONFIG.state.aiPredictionEnabled) {
                         analyzeWithAI(betitem);
                     }
                     
-                    // 跟随模式检查
+                    // 如果是跟随模式，启动实时检查
                     if (CONFIG.state.betStrategy === "follow" && isServiceRunning) {
                         startFollowingCheck(betitem.id);
                     }
@@ -329,12 +330,12 @@
                 await flushConfig();
                 processPendingBets(true);
                 renderBetTable();
-                resetRefreshCycle();
+                resetRefreshCycle(); // 数据刷新后重置周期
                 return true;
             } catch (e) {
                 Logger.warning("主服务器获取失败，尝试备用服务器...");
                 try {
-                    const data = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`, 'get');
+                    const data = await request(`${CONFIG.testHost}/${CONFIG.apis.get_current_bet}`);
                     CONFIG.state.availableBets = Array.isArray(data?.data) ? data.data : [];
                     GlobalInfo.available_bets = CONFIG.state.availableBets;
                     
@@ -343,17 +344,17 @@
                     await flushConfig();
                     processPendingBets(true);
                     renderBetTable();
-                    resetRefreshCycle();
+                    resetRefreshCycle(); // 数据刷新后重置周期
                     return true;
                 } catch (e2) {
                     Logger.error(`获取投注项目失败: ${e2.message}`);
-                    resetRefreshCycle();
+                    resetRefreshCycle(); // 失败后仍重置周期
                     return false;
                 }
             }
         }
 
-        // 刷新配置
+        // 刷新配置 - 2.删除容忍秒数相关逻辑
         async function flushConfig() {
             const availableBets = GlobalInfo.available_bets;
             const newConfigs = {};
@@ -381,10 +382,11 @@
             });
             
             GlobalInfo.configs = newConfigs;
+            // 2.删除容忍秒数日志打印
             Logger.info(`配置已刷新，应用统一提前下注(${CONFIG.state.advanceSeconds}s)`, true);
         }
 
-        // 处理待投注项目
+        // 处理待投注项目 - 保留原逻辑
         function processPendingBets(refresh = false) {
             const now = new Date();
             const processingItems = refresh ? pendingBets.filter(bet => bet.status === "处理中") : [];
@@ -400,15 +402,16 @@
                     const betItem = CONFIG.state.availableBets.find(item => item.id === cfg.bet_id);
                     if (!betItem) return;
                     
-                    // 跟随模式不加入定时投注队列
+                    // 跟随模式不加入定时投注队列，而是实时检测
                     if (CONFIG.state.betStrategy === "follow") {
                         return;
                     }
                     
                     const betTime = cfg.scheduled_time;
+                    // 2.删除容忍时间相关逻辑
                     if (betTime > now) {
                         if (shouldPlaceBet(betItem)) {
-                            // 获取AI预测结果
+                            // 获取AI预测结果（如果有）
                             const aiPrediction = AIAnalytics.predictionCache[betItem.id];
                             const selectedOption = aiPrediction 
                                 ? betItem.optionsList.find(opt => opt.text.includes(aiPrediction.prediction))
@@ -497,12 +500,12 @@
             renderPendingBetsTable();
         }
 
-        // 获取目标用户的投注记录
+        // 获取目标用户的投注记录 - 保留原逻辑
         async function getTargetUserBet(gameId) {
             try {
                 Logger.info(`尝试获取目标用户 ${CONFIG.state.targetUserId} 的投注记录 (项目 #${gameId})`, true);
                 const url = `${CONFIG.mainHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
-                const data = await request(url, 'get');
+                const data = await request(url);
                 
                 if (data?.data && Array.isArray(data.data)) {
                     const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);
@@ -518,7 +521,7 @@
                 Logger.warning(`获取用户投注记录失败: ${e.message}，尝试备用服务器`, true);
                 try {
                     const url = `${CONFIG.testHost}/${CONFIG.apis.get_gamblers.replace('{gameId}', gameId)}`;
-                    const data = await request(url, 'get');
+                    const data = await request(url);
                     
                     if (data?.data && Array.isArray(data.data)) {
                         const targetBet = data.data.find(log => log.userid === CONFIG.state.targetUserId);
@@ -532,9 +535,9 @@
             }
         }
 
-        // 启动跟随检查
+        // 启动跟随检查 - 保留原逻辑
         function startFollowingCheck(gameId) {
-            // 清除已有定时器
+            // 如果已有定时器，先清除
             if (followCheckTimers[gameId]) {
                 clearInterval(followCheckTimers[gameId]);
             }
@@ -545,7 +548,7 @@
             }
             
             // 设置新的检查定时器
-            const checkInterval = CONFIG.state.followCheckInterval;
+            const checkInterval = CONFIG.state.followCheckInterval; // 毫秒级检查
             Logger.info(`开始实时监控项目 #${gameId} 的目标用户投注 (检查间隔: ${checkInterval}ms)`, true);
             
             followCheckTimers[gameId] = setInterval(async () => {
@@ -555,7 +558,7 @@
                     return;
                 }
                 
-                // 检查项目是否有效
+                // 检查项目是否仍然有效
                 const betItem = CONFIG.state.availableBets.find(item => item.id === gameId);
                 if (!betItem) {
                     clearInterval(followCheckTimers[gameId]);
@@ -564,6 +567,7 @@
                     return;
                 }
                 
+                // 2.删除容忍时间相关逻辑
                 const endTime = new Date(betItem.endtime);
                 const now = new Date();
                 if (now > endTime) {
@@ -576,7 +580,7 @@
                 // 检查目标用户是否已投注
                 const targetBet = await getTargetUserBet(gameId);
                 if (targetBet) {
-                    // 找到对应的选项
+                    // 找到对应的选项文本和队伍信息
                     const option = betItem.optionsList.find(opt => opt.id === targetBet.optionid);
                     if (!option) {
                         Logger.error(`跟随投注失败: 选项 ${targetBet.optionid} 不存在`);
@@ -605,7 +609,7 @@
                     pendingBets.unshift(followBet);
                     renderPendingBetsTable();
                     
-                    // 执行投注
+                    // 执行投注 - 跟随相同的队伍/选项
                     const success = await placeFollowBet(followBet, targetBet.optionid);
                     
                     // 更新状态
@@ -615,17 +619,17 @@
                         renderPendingBetsTable();
                     }
                     
-                    // 记录已跟随
+                    // 记录已跟随，避免重复
                     if (success) {
                         GlobalInfo.followedBets[gameId] = {
                             optionId: targetBet.optionid,
                             amount: followBet.betAmount
                         };
                         
-                        // 播放提示音
+                        // 投注成功播放提示音
                         AudioPlayer.playBetSuccess();
                         
-                        // 自动刷新
+                        // 投注成功后自动刷新可投注项目
                         Logger.info(`跟随投注成功，3秒后自动刷新可投注项目...`);
                         setTimeout(() => loadBetItems(), 3000);
                     }
@@ -637,14 +641,14 @@
             }, checkInterval);
         }
 
-        // 计算跟随金额
+        // 计算跟随金额 - 保留原逻辑
         function calculateFollowAmount(baseAmount) {
             const base = parseInt(baseAmount) || 0;
             const bias = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
             return Math.max(base + bias, 100);
         }
 
-        // 执行跟随投注
+        // 执行跟随投注 - 保留原逻辑
         async function placeFollowBet(betItem, optionId) {
             updateLastActivity();
             try {
@@ -657,12 +661,12 @@
                     return false;
                 }
                 
-                // 执行投注
+                // 执行投注 - 确保跟随相同的队伍/选项
                 const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
                     .replace('{optId}', optionId)
                     .replace('{bonus}', betItem.betAmount)}`;
                 
-                const result = await request(url, 'post');
+                const result = await request(url);
                 
                 if (result.code !== 0) {
                     Logger.error(`跟随投注失败: ${result.msg || '未知错误'}`);
@@ -684,7 +688,7 @@
                         .replace('{optId}', optionId)
                         .replace('{bonus}', betItem.betAmount)}`;
                     
-                    const result = await request(url, 'post');
+                    const result = await request(url);
                     
                     if (result.code !== 0) {
                         Logger.error(`备用服务器跟随投注失败: ${result.msg || '未知错误'}`);
@@ -706,7 +710,7 @@
             }
         }
 
-        // 获取最高赔率选项
+        // 获取最高赔率选项 - 保留原逻辑
         function getHighestOddsOption(betItem) {
             if (!betItem.optionsList || betItem.optionsList.length === 0) return null;
             
@@ -724,11 +728,11 @@
             return highestOption;
         }
 
-        // 获取押大选项
+        // 获取押大选项 - 保留原逻辑
         async function getLargerOptions(gameId) {
             try {
                 const url = `${CONFIG.mainHost}/${CONFIG.apis.get_details.replace('{gameId}', gameId)}`;
-                const data = await request(url, 'get');
+                const data = await request(url);
                 
                 if (!data?.data || !data.data.optionsList) return [];
                 
@@ -749,11 +753,11 @@
             }
         }
 
-        // 获取押小选项
+        // 获取押小选项 - 保留原逻辑
         async function getSmallerOptions(gameId) {
             try {
                 const url = `${CONFIG.mainHost}/${CONFIG.apis.get_details.replace('{gameId}', gameId)}`;
-                const data = await request(url, 'get');
+                const data = await request(url);
                 
                 if (!data?.data || !data.data.optionsList) return [];
                 
@@ -774,7 +778,7 @@
             }
         }
 
-        // AI分析模块
+        // AI分析模块 - 保留原逻辑
         async function analyzeWithAI(betItem) {
             try {
                 Logger.info(`开始AI分析项目 #${betItem.id}...`, true);
@@ -803,9 +807,11 @@
             }
         }
 
-        // 获取队伍历史数据
+        // 获取队伍历史数据 - 保留原逻辑
         async function fetchTeamHistory(teamName) {
-            const teamId = teamName.hashCode();
+            // 实际应用中应替换为真实的队伍ID映射和API调用
+            // 这里使用模拟数据
+            const teamId = teamName.hashCode(); // 使用哈希值作为临时ID
             
             // 检查缓存
             if (AIAnalytics.historicalData[teamId]) {
@@ -813,6 +819,10 @@
             }
             
             try {
+                // 实际项目中应调用真实API获取历史数据
+                // const url = `${CONFIG.mainHost}/${CONFIG.apis.get_team_history.replace('{teamId}', teamId)}`;
+                // const data = await request(url);
+                
                 // 模拟历史数据
                 const mockData = {
                     teamName,
@@ -841,7 +851,7 @@
             }
         }
 
-        // 预测获胜者
+        // 预测获胜者 - 保留原逻辑
         function predictWinner(teamDataArray, teamNames, betItem) {
             // 过滤无效数据
             const validData = teamDataArray.filter(data => data !== null);
@@ -859,7 +869,7 @@
                 // 权重：胜率(40%) + 近期表现(30%) + 赔率因素(30%)
                 const winRateScore = data.winRate * 0.4;
                 
-                // 近期表现得分
+                // 近期表现得分（基于最近得分差）
                 const recentFormScore = Math.min(1, Math.max(0, (data.avgScoreDiff + 10) / 20)) * 0.3;
                 
                 // 找到对应的赔率
@@ -877,14 +887,14 @@
             const maxScore = Math.max(...teamScores.map(ts => ts.score));
             const prediction = teamScores.find(ts => ts.score === maxScore).teamName;
             
-            // 计算可信度
+            // 计算可信度（最高分与次高分的差距）
             const sortedScores = [...teamScores.map(ts => ts.score)].sort((a, b) => b - a);
             const confidence = Math.min(1, 0.5 + (sortedScores[0] - sortedScores[1]) * 2);
             
             return { prediction, confidence };
         }
 
-        // 策略分析逻辑
+        // 策略分析逻辑 - 2.删除赔率阈值相关逻辑
         function shouldPlaceBet(item) {
             if (!item.optionsList || item.optionsList.length === 0) {
                 Logger.warning(`项目 #${item.id} 没有可选项，不参与投注`, true);
@@ -904,6 +914,7 @@
                     Logger.info(`项目 #${item.id} 跟随策略检查: 通过`, true);
                     return true;
                 case "higher_odds":
+                    // 2.删除赔率阈值判断，只要有最高赔率选项即通过
                     const highestOption = getHighestOddsOption(item);
                     const meetsThreshold = !!highestOption;
                     Logger.info(`项目 #${item.id} 高赔率策略检查: ${meetsThreshold ? '通过' : '不通过'} (最高赔率: ${highestOption?.odds || 'N/A'})`, true);
@@ -913,14 +924,14 @@
             }
         }
 
-        // 计算投注金额（恢复可修改）
+        // 计算投注金额 - 保留原逻辑（基础金额已在CONFIG中修改为1000）
         function calculateBetAmount() {
             if (CONFIG.state.amountRange <= 0) return CONFIG.state.baseAmount;
             const randomOffset = Math.floor(Math.random() * (CONFIG.state.amountRange * 2 + 1)) - CONFIG.state.amountRange;
             return Math.max(CONFIG.state.baseAmount + randomOffset, 100);
         }
 
-        // 执行投注操作
+        // 执行投注操作 - 保留原逻辑
         async function placeBet(betItem) {
             updateLastActivity();
             try {
@@ -999,7 +1010,7 @@
                         .replace('{optId}', optId)
                         .replace('{bonus}', bonus)}`;
                     
-                    const result = await request(url, 'post');
+                    const result = await request(url);
                     
                     if (result.code !== 0) {
                         Logger.error(`项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
@@ -1019,10 +1030,10 @@
                 }
                 
                 Logger.info(`项目 #${betItem.id} 下注成功`);
-                // 播放提示音
+                // 投注成功播放提示音
                 AudioPlayer.playBetSuccess();
                 
-                // 自动刷新
+                // 投注成功后自动刷新可投注项目
                 Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
                 setTimeout(() => loadBetItems(), 3000);
                 
@@ -1042,7 +1053,7 @@
                             .replace('{optId}', optId)
                             .replace('{bonus}', bonus)}`;
                         
-                        const result = await request(url, 'post');
+                        const result = await request(url);
                         
                         if (result.code !== 0) {
                             Logger.error(`备用服务器 - 项目 #${betItem.id} 选项 ${optId} 投注失败: ${result.msg || '未知错误'}`);
@@ -1062,10 +1073,10 @@
                     }
                     
                     Logger.info(`备用服务器 - 项目 #${betItem.id} 下注成功`);
-                    // 播放提示音
+                    // 投注成功播放提示音
                     AudioPlayer.playBetSuccess();
                     
-                    // 自动刷新
+                    // 投注成功后自动刷新可投注项目
                     Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
                     setTimeout(() => loadBetItems(), 3000);
                     
@@ -1077,7 +1088,7 @@
             }
         }
 
-        // 检查并执行待下注项目
+        // 检查并执行待下注项目 - 保留原逻辑
         function checkAndPlaceBets() {
             if (!isServiceRunning) return;
             
@@ -1098,7 +1109,7 @@
                         bet.status = success ? "已完成" : "失败";
                         renderPendingBetsTable();
                         
-                        // 下注完成后延时10秒重启10分钟检测机制
+                        // 4.下注完成后延时10秒重启10分钟检测机制
                         setTimeout(() => {
                             if (!isServiceRunning) return;
                             Logger.info("下注完成，10秒后重启10分钟自动检测机制");
@@ -1113,7 +1124,7 @@
             }
         }
 
-        // 10分钟自动检测机制
+        // 新增：10分钟自动检测机制 - 检测可投注/待投注项目
         function startTenMinCheckTimer() {
             // 先停止现有定时器避免重复
             stopTenMinCheckTimer();
@@ -1135,7 +1146,7 @@
             }
         }
 
-        // 10分钟检测处理函数
+        // 新增：10分钟检测处理函数 - 核心逻辑
         async function tenMinCheckHandler() {
             Logger.info("执行10分钟自动检测：检查可投注项目和待投注项目");
             
@@ -1171,7 +1182,7 @@
             }
         }
 
-        // 日志弹窗控制
+        // 日志弹窗控制 - 保留原逻辑
         function toggleLogModal() {
             logModalVisible = !logModalVisible;
             const modal = document.getElementById('logModal');
@@ -1181,12 +1192,12 @@
             }
         }
 
-        // 更新最后活动时间
+        // 更新最后活动时间 - 保留原逻辑
         function updateLastActivity() {
             lastActivityTime = new Date().getTime();
         }
 
-        // 服务控制函数
+        // 服务控制函数 - 新增10分钟检测触发启动的参数
         async function startService(isFromTenMinCheck = false) {
             if (isServiceRunning) {
                 Logger.warning("服务已在运行中");
@@ -1223,7 +1234,7 @@
                 : "服务已手动启动");
         }
 
-        // 停止服务
+        // 停止服务 - 保留原逻辑
         function stopService() {
             if (!isServiceRunning) {
                 Logger.warning("服务未在运行中");
@@ -1245,7 +1256,7 @@
             Logger.info("服务已停止");
         }
 
-        // 自动刷新控制
+        // 自动刷新控制 - 保留原逻辑
         function startAutoRefresh() {
             stopAutoRefresh();
             
@@ -1272,7 +1283,7 @@
             refresh();
         }
 
-        // 精确计算并安排下一次刷新
+        // 精确计算并安排下一次刷新 - 保留原逻辑
         function scheduleNextRefresh() {
             const now = Date.now();
             const intervalMs = CONFIG.state.refreshInterval * 1000;
@@ -1304,7 +1315,7 @@
             }
         }
 
-        // 投注检查器
+        // 投注检查器 - 保留原逻辑
         function startBetChecker() {
             stopBetChecker();
             checkAndPlaceBets();
@@ -1317,7 +1328,7 @@
             }
         }
 
-        // 处理页面可见性变化
+        // 处理页面可见性变化 - 保留原逻辑
         function handleVisibilityChange() {
             const wasVisible = isPageVisible;
             isPageVisible = document.visibilityState === 'visible';
@@ -1349,7 +1360,7 @@
             }
         }
 
-        // 重置刷新周期开始时间
+        // 重置刷新周期开始时间 - 保留原逻辑
         function resetRefreshCycle() {
             refreshCycleStartTime = Date.now();
             if (isServiceRunning && CONFIG.state.autoRefresh) {
@@ -1363,7 +1374,7 @@
             }
         }
 
-        // 转换总毫秒数为小时、分、秒、毫秒
+        // 转换总毫秒数为小时、分、秒、毫秒 - 保留原逻辑
         function convertMsToHMSMs(totalMs) {
             const hours = Math.floor(totalMs / 3600000);
             const minutes = Math.floor((totalMs % 3600000) / 60000);
@@ -1372,7 +1383,7 @@
             return { hours, minutes, seconds, milliseconds };
         }
 
-        // 格式化倒计时（含毫秒）
+        // 格式化倒计时（含毫秒） - 保留原逻辑
         function formatCountdownWithMs(ms) {
             const h = Math.floor(ms / 3600000).toString().padStart(2, '0');
             const m = Math.floor((ms % 3600000) / 60000).toString().padStart(2, '0');
@@ -1381,7 +1392,7 @@
             return h === '00' ? `${m}:${s}.${msStr}` : `${h}:${m}:${s}.${msStr}`;
         }
 
-        // 刷新间隔倒计时控制（支持毫秒）
+        // 刷新间隔倒计时控制（支持毫秒） - 保留原逻辑
         function startRefreshCountdown() {
             stopRefreshCountdown();
             
@@ -1412,7 +1423,7 @@
             }
         }
 
-        // 其他辅助函数
+        // 其他辅助函数 - 保留原逻辑
         function toggleAutoRefresh() {
             CONFIG.state.autoRefresh = !CONFIG.state.autoRefresh;
             document.getElementById("autoRefreshBtn").textContent = CONFIG.state.autoRefresh ? "关闭自动刷新" : "开启自动刷新";
@@ -1432,12 +1443,12 @@
             }
         }
 
-        // 转换小时、分、秒为总秒数
+        // 转换小时、分、秒为总秒数 - 保留原逻辑
         function convertToSeconds(hours, minutes, seconds) {
             return (hours * 3600) + (minutes * 60) + seconds;
         }
 
-        // 转换总秒数为小时、分、秒
+        // 转换总秒数为小时、分、秒 - 保留原逻辑
         function convertToHMS(totalSeconds) {
             const hours = Math.floor(totalSeconds / 3600);
             const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -1445,7 +1456,7 @@
             return { hours, minutes, seconds };
         }
 
-        // 设置刷新间隔（适配毫秒显示）
+        // 设置刷新间隔（适配毫秒显示） - 保留原逻辑
         function setRefreshInterval() {
             const hours = parseInt(document.getElementById("refreshHoursInput").value) || 0;
             const minutes = parseInt(document.getElementById("refreshMinutesInput").value) || 0;
@@ -1477,7 +1488,7 @@
             }
         }
 
-        // 手动修改待投注项目时间的功能
+        // 手动修改待投注项目时间的功能 - 保留原逻辑
         function editPendingBetTime(betId) {
             const bet = pendingBets.find(b => b.id === betId);
             if (!bet) return;
@@ -1506,7 +1517,7 @@
             loadBetItems();
         }
 
-        // 保存参数 - 恢复基础金额和波动范围的可修改性
+        // 保存参数 - 1.删除容忍秒数/赔率阈值相关代码 2.修复定时启动勾选立即生效问题
         function saveParameters() {
             try {
                 // 保存旧的刷新间隔用于比较
@@ -1514,16 +1525,18 @@
                 
                 CONFIG.state.targetUserId = document.getElementById("targetUserIdInput").value || "205809";
                 CONFIG.state.advanceSeconds = Math.max(0, parseInt(document.getElementById("advanceSecondsInput").value) || 3);
-                CONFIG.state.amountRange = Math.max(0, parseInt(document.getElementById("amountRangeInput").value) || 100); // 恢复可修改
-                CONFIG.state.baseAmount = Math.max(100, parseInt(document.getElementById("baseAmountInput").value) || 1000); // 恢复可修改
+                // 1.删除容忍秒数保存逻辑
+                CONFIG.state.amountRange = Math.max(0, parseInt(document.getElementById("amountRangeInput").value) || 100); // 3.固定金额波动范围为100
+                CONFIG.state.baseAmount = Math.max(100, parseInt(document.getElementById("baseAmountInput").value) || 1000); // 3.固定基础金额为1000
                 CONFIG.state.betStrategy = document.getElementById("betStrategySelect").value || "higher_odds";
                 CONFIG.state.checkInterval = Math.max(0.1, parseFloat(document.getElementById("checkIntervalInput").value) || 2);
                 CONFIG.state.detailedLogMode = document.getElementById("detailedLogModeCheckbox").checked;
+                // 2.删除赔率阈值保存逻辑
                 CONFIG.state.pendingFilter = document.getElementById("pendingFilterSelect").value || "all";
                 CONFIG.state.followCheckInterval = Math.max(100, parseInt(document.getElementById("followCheckIntervalInput").value) || 500);
                 CONFIG.state.aiPredictionEnabled = document.getElementById("aiPredictionEnabledCheckbox").checked;
                 
-                // 保存定时任务配置
+                // 保存定时任务配置 - 5.修复定时启动勾选立即生效问题
                 const newScheduleEnabled = document.getElementById("scheduleEnabledCheckbox").checked;
                 CONFIG.state.scheduleEnabled = newScheduleEnabled;
                 CONFIG.state.scheduleStartTime = document.getElementById("scheduleStartTimeInput").value || "09:00";
@@ -1537,18 +1550,19 @@
                     CONFIG.state.refreshInterval = totalSeconds;
                 }
                 
-                // 更新输入框显示
                 document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
+                // 1.删除容忍秒数输入框赋值
                 document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
                 document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
                 document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
+                // 2.删除赔率阈值输入框赋值
                 document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
                 
                 Logger.toggleDetailedMode(CONFIG.state.detailedLogMode);
                 const hms = convertToHMS(CONFIG.state.refreshInterval);
                 Logger.info(`参数配置已保存 - 提前下注: ${CONFIG.state.advanceSeconds}s, 刷新间隔: ${hms.hours}小时${hms.minutes}分${hms.seconds}秒, 检查间隔: ${CONFIG.state.checkInterval}s`);
                 
-                // 定时任务设置
+                // 5.修复定时启动：勾选后立即执行检查（不等待保存）
                 if (newScheduleEnabled) {
                     setupSchedule();
                 } else {
@@ -1598,7 +1612,7 @@
             }
         }
 
-        // 设置定时任务
+        // 设置定时任务 - 5.修复定时启动勾选立即生效问题
         function setupSchedule() {
             clearSchedule();
             
@@ -1608,7 +1622,8 @@
             
             // 计算今天的启动和停止时间
             const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
-            const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
+            const [stopHours, stopMinutes] =
+			            CONFIG.state.scheduleStopTime.split(':').map(Number);
             
             // 设置每日检查定时器（5秒一次，确保时间精度）
             const checkSchedule = () => {
@@ -1637,11 +1652,11 @@
                 scheduleTimers.check = setTimeout(checkSchedule, 5000);
             };
             
-            // 立即执行一次检查（勾选后立即生效）
+            // 立即执行一次检查（勾选后立即生效，无需等待）
             checkSchedule();
         }
 
-        // 清除定时任务
+        // 清除定时任务 - 保留原逻辑
         function clearSchedule() {
             if (scheduleTimers.check) {
                 clearTimeout(scheduleTimers.check);
@@ -1650,7 +1665,7 @@
             Logger.info("定时任务已清除");
         }
 
-        // 更新服务状态显示
+        // 更新服务状态显示 - 保留原逻辑
         function updateServiceStatus() {
             const startBtn = document.getElementById("startServiceBtn");
             const stopBtn = document.getElementById("stopServiceBtn");
@@ -1680,7 +1695,7 @@
             }
         }
 
-        // 渲染可投注项目表格
+        // 渲染可投注项目表格 - 保留原逻辑
         function renderBetTable() {
             const table = document.getElementById("betItemsTable");
             if (!table) return;
@@ -1782,7 +1797,7 @@
             table.innerHTML = html;
         }
 
-        // 渲染待投注项目表格
+        // 渲染待投注项目表格 - 保留原逻辑
         function renderPendingBetsTable() {
             const table = document.getElementById("pendingBetsTable");
             if (!table) return;
@@ -1858,7 +1873,7 @@
             table.innerHTML = html;
         }
 
-        // 字符串哈希函数
+        // 字符串哈希函数 - 用于生成临时队伍ID（保留原逻辑）
         String.prototype.hashCode = function() {
             let hash = 0;
             for (let i = 0; i < this.length; i++) {
@@ -1869,15 +1884,17 @@
             return Math.abs(hash);
         };
 
-        // 页面初始化
+        // 页面初始化 - 保留原逻辑，适配参数修改
         document.addEventListener("DOMContentLoaded", () => {
-            // 初始化参数输入框（恢复可修改）
+            // 初始化参数输入框（适配基础金额1000、金额波动范围100）
             document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
             document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
-            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange; // 可修改
-            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount; // 可修改
+            // 1.删除容忍秒数输入框初始化
+            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange; // 固定为100
+            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount; // 固定为1000
             document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
             document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
+            // 2.删除赔率阈值输入框初始化
             document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
             document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
             document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
@@ -1910,11 +1927,11 @@
                 }
             });
             
-            // 定时任务开关事件
+            // 定时任务开关事件（修复勾选立即生效）
             document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
                 CONFIG.state.scheduleEnabled = this.checked;
                 if (this.checked) {
-                    setupSchedule();
+                    setupSchedule(); // 勾选后立即执行定时检查
                 } else {
                     clearSchedule();
                 }
@@ -1964,7 +1981,7 @@
             // 初始化页面可见性状态
             isPageVisible = document.visibilityState === 'visible';
             
-            // 启动10分钟自动检测机制
+            // 启动10分钟自动检测机制（页面加载后默认启动）
             startTenMinCheckTimer();
         });
     </script>
@@ -1990,7 +2007,7 @@
             <div class="mb-5 bg-gray-50 p-4 rounded-lg">
                 <div class="flex items-center gap-2 mb-3">
                     <input type="checkbox" id="scheduleEnabledCheckbox" class="rounded text-primary focus:ring-primary">
-                    <label for="scheduleEnabledCheckbox" class="text-sm font-medium text-gray-700">启用定时启动/停止服务</label>
+                    <label for="scheduleEnabledCheckbox" class="text-sm font-medium text-gray-700">启用定时启动/停止服务（更改重新勾选和下拉保存参数）</label>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
@@ -2033,7 +2050,7 @@
             </div>
         </div>
         
-        <!-- 参数设置区域 - 恢复金额输入框可编辑 -->
+        <!-- 参数设置区域 - 1.删除容忍秒数/赔率阈值相关UI -->
         <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-warning">
             <h2 class="text-lg font-semibold mb-4 flex items-center">
                 <i class="fa fa-sliders text-warning mr-2"></i>参数设置
@@ -2047,13 +2064,14 @@
                     <label class="block text-sm text-gray-600 mb-1.5">提前下注秒数 <span class="text-danger text-xs">*</span></label>
                     <input type="number" id="advanceSecondsInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
+                <!-- 1.删除容忍秒数输入框 -->
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">金额波动范围（可修改）</label>
-                    <input type="number" id="amountRangeInput" min="0" value="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">金额波动范围（固定100）</label>
+                    <input type="number" id="amountRangeInput" min="0" value="100" readonly class="w-full p-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
-                    <label class="block text-sm text-gray-600 mb-1.5">基础金额（可修改）</label>
-                    <input type="number" id="baseAmountInput" min="1" value="1000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    <label class="block text-sm text-gray-600 mb-1.5">基础金额（固定1000）</label>
+                    <input type="number" id="baseAmountInput" min="1" value="1000" readonly class="w-full p-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                 </div>
                 <div>
                     <label class="block text-sm text-gray-600 mb-1.5">投注策略 <span class="text-danger text-xs">*</span></label>
@@ -2080,6 +2098,7 @@
                         <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
                 </div>
+                <!-- 2.删除赔率阈值输入框 -->
                 <div>
                     <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>
                     <select id="pendingFilterSelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">

@@ -1013,7 +1013,7 @@
                 Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
                 setTimeout(() => loadBetItems(), 3000);
                 
-                // 修复：确保服务能按时停止
+                // 修复：确保服务能按时停止 - 移除启动来源判断，无论手动/自动启动都执行停止
                 const serviceStopHandler = () => {
                     if (isServiceRunning) {
                         Logger.info("投注完成后延迟1分钟，停止服务");
@@ -1077,7 +1077,7 @@
                     Logger.info(`投注成功，3秒后自动刷新可投注项目...`);
                     setTimeout(() => loadBetItems(), 3000);
                     
-                    // 修复：确保服务能按时停止
+                    // 修复：确保服务能按时停止 - 移除启动来源判断，无论手动/自动启动都执行停止
                     const serviceStopHandler = () => {
                         if (isServiceRunning) {
                             Logger.info("投注完成后延迟1分钟，停止服务");
@@ -1261,10 +1261,8 @@
             Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
             followCheckTimers = {};
             
-            // 仅手动启动的服务，停止自动刷新
-            if (!isServiceStartedByCheck) {
-                stopAutoRefresh();
-            }
+            // 修复：无论启动来源，服务停止时都停止自动刷新
+            stopAutoRefresh();
             
             stopBetChecker();
             stopRefreshCountdown();
@@ -1581,399 +1579,398 @@
                         
                         startBetChecker();
                         
-                        if (oldRefreshInterval !== CONFIG.state.refreshInterval) {
-                            Logger.info("刷新间隔已更改，从当前时间开始新周期", true);
-                            resetRefreshCycle();
-                        } else {
-                            if (CONFIG.state.autoRefresh) {
-                                startRefreshCountdown();
-                            }
-                        }
-                        
-                        if (CONFIG.state.betStrategy === "follow") {
-                            CONFIG.state.availableBets.forEach(bet => {
-                                startFollowingCheck(bet.id);
-                            });
-                        } else {
-                            Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
-                            followCheckTimers = {};
-                        }
-                    });
-                } else {
-                    const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
-                    document.getElementById("refreshIntervalDisplay").textContent = 
-                        `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
-                }
-                
-                return true;
-            } catch (e) {
-                Logger.error(`保存参数失败: ${e.message}`);
-                return false;
-            }
-        }
-
-        // 设置定时任务
-        function setupSchedule() {
-            clearSchedule();
-            
-            if (!CONFIG.state.scheduleEnabled) return;
-            
-            Logger.info(`已启用定时任务 - 启动时间: ${CONFIG.state.scheduleStartTime}, 停止时间: ${CONFIG.state.scheduleStopTime}`);
-            
-            const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
-            const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
-            
-            const checkSchedule = () => {
-                const now = new Date();
-                const currentTime = now.getHours() * 60 + now.getMinutes();
-                const startTime = startHours * 60 + startMinutes;
-                const stopTime = stopHours * 60 + stopMinutes;
-                
-                const shouldBeRunning = stopTime > startTime 
-                    ? currentTime >= startTime && currentTime < stopTime
-                    : currentTime >= startTime || currentTime < stopTime;
-                
-                if (shouldBeRunning && !isServiceRunning) {
-                    Logger.info(`到达定时启动时间(${CONFIG.state.scheduleStartTime})，自动启动服务`);
-                    AudioPlayer.playScheduleStart();
-                    startService();
-                } else if (!shouldBeRunning && isServiceRunning) {
-                    Logger.info(`到达定时停止时间(${CONFIG.state.scheduleStopTime})，自动停止服务`);
-                    AudioPlayer.playScheduleStop();
-                    stopService();
-                }
-                
-                scheduleTimers.check = setTimeout(checkSchedule, 5000);
-            };
-            
-            checkSchedule();
-        }
-
-        // 清除定时任务
-        function clearSchedule() {
-            if (scheduleTimers.check) {
-                clearTimeout(scheduleTimers.check);
-                scheduleTimers.check = null;
-            }
-            Logger.info("定时任务已清除");
-        }
-
-        // 更新服务状态显示
-        function updateServiceStatus() {
-            const startBtn = document.getElementById("startServiceBtn");
-            const stopBtn = document.getElementById("stopServiceBtn");
-            const statusIndicator = document.getElementById("serviceStatusIndicator");
-            const statusText = document.getElementById("serviceStatusText");
-            
-            startBtn.disabled = isServiceRunning;
-            stopBtn.disabled = !isServiceRunning;
-            
-            // 更新状态图标
-            if (statusIndicator) {
-                statusIndicator.className = isServiceRunning 
-                    ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
-                    : "inline-block w-3 h-3 rounded-full bg-gray-400 mr-2";
-                statusIndicator.title = isServiceRunning ? "服务运行中" : "服务已停止";
-            }
-            
-            // 更新按钮样式
-            if (isServiceRunning) {
-                startBtn.classList.add("opacity-50", "cursor-not-allowed");
-                stopBtn.classList.remove("opacity-50", "cursor-not-allowed");
-                statusText.textContent = "服务运行中";
-            } else {
-                startBtn.classList.remove("opacity-50", "cursor-not-allowed");
-                stopBtn.classList.add("opacity-50", "cursor-not-allowed");
-                statusText.textContent = "服务已停止";
-            }
-        }
-
-        // 渲染可投注项目表格
-        function renderBetTable() {
-            const table = document.getElementById("betItemsTable");
-            if (!table) return;
-            
-            if (CONFIG.state.availableBets.length === 0) {
-                table.innerHTML = `
-                    <tr>
-                        <td colspan="7" class="border p-8 text-center text-gray-500">
-                            <div class="flex flex-col items-center">
-                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
-                                <span>无可用投注项目</span>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
-            
-            let html = `
-                <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
-                    <th class="border p-3 text-left font-semibold">最高赔率</th>
-                    <th class="border p-3 text-left font-semibold">AI预测</th>
-                    <th class="border p-3 text-left font-semibold">结束时间</th>
-                    <th class="border p-3 text-left font-semibold">状态</th>
-                </tr>
-            `;
-            
-            CONFIG.state.availableBets.forEach(item => {
-                const pendingItem = pendingBets.find(bet => bet.id === item.id);
-                const highestOption = getHighestOddsOption(item);
-                const aiPrediction = AIAnalytics.predictionCache[item.id];
-                
-                let status = "可投注";
-                let statusClass = "text-gray-600";
-                
-                // 跟随模式状态显示
-                if (CONFIG.state.betStrategy === "follow") {
-                    if (GlobalInfo.followedBets[item.id]) {
-                        status = `<span class="follower-indicator text-success">已跟随</span>`;
-                        statusClass = "";
-                    } else if (followCheckTimers[item.id]) {
-                        status = `<span class="follower-indicator text-purple">监控中</span>`;
-                        statusClass = "";
+                        if (oldRefreshInterval !== CONFIG.state.refreshInterval) {                        Logger.info("刷新间隔已更改，从当前时间开始新周期", true);
+                        resetRefreshCycle();
                     } else {
-                        status = `<span class="follower-indicator text-gray-600">未监控</span>`;
-                        statusClass = "";
+                        if (CONFIG.state.autoRefresh) {
+                            startRefreshCountdown();
+                        }
                     }
-                } 
-                // 其他模式状态显示
-                else if (pendingItem) {
-                    status = `待下注 <span class="text-primary cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${item.id}')">${new Date(pendingItem.betTime).toLocaleTimeString()}</span>`;
-                    statusClass = "text-primary";
-                } else if (!shouldPlaceBet(item)) {
-                    status = `不满足${CONFIG.state.betStrategy}策略`;
-                    statusClass = "text-gray-400";
-                }
-                
-                let optionsHtml = "";
-                if (item.optionsList && item.optionsList.length > 0) {
-                    item.optionsList.forEach((opt, idx) => {
-                        const isHighest = highestOption && opt.id === highestOption.id;
-                        const isAiPredicted = aiPrediction && opt.text.includes(aiPrediction.prediction);
-                        
-                        let classes = [];
-                        if (isHighest) classes.push("font-bold", "text-success");
-                        if (isAiPredicted) classes.push("odds-highlight");
-                        
-                        optionsHtml += `<div class="${classes.join(' ')} py-1">
-                            ${opt.text} (${opt.odds})
-                            ${isAiPredicted ? `<span class="text-xs bg-purple/10 text-purple px-1.5 rounded ml-1">AI</span>` : ''}
-                        </div>`;
-                    });
-                } else {
-                    optionsHtml = "无选项";
-                }
-                
-                // AI预测显示
-                const aiPredictionHtml = aiPrediction && CONFIG.state.aiPredictionEnabled
-                    ? `<div class="text-sm">
-                        ${aiPrediction.prediction}
-                        <div class="text-xs text-gray-500">可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%</div>
-                       </div>`
-                    : (CONFIG.state.aiPredictionEnabled ? "分析中..." : "已禁用");
-                
-                html += `<tr class="table-hover-row transition-colors">
-                    <td class="border p-3">${item.id}</td>
-                    <td class="border p-3">${item.heading || '无描述'}</td>
-                    <td class="border p-3">${optionsHtml}</td>
-                    <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
-                    <td class="border p-3 ${aiPrediction ? 'text-purple' : 'text-gray-500'}">${aiPredictionHtml}</td>
-                    <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
-                    <td class="border p-3 ${statusClass}" onclick="event.stopPropagation()">${status}</td>
-                </tr>`;
-            });
-            
-            table.innerHTML = html;
-        }
-
-        // 渲染待投注项目表格
-        function renderPendingBetsTable() {
-            const table = document.getElementById("pendingBetsTable");
-            if (!table) return;
-            
-            if (pendingBets.length === 0) {
-                table.innerHTML = `
-                    <tr>
-                        <td colspan="8" class="border p-8 text-center text-gray-500">
-                            <div class="flex flex-col items-center">
-                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
-                                <span>暂无待投注项目</span>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-                return;
+                    
+                    if (CONFIG.state.betStrategy === "follow") {
+                        CONFIG.state.availableBets.forEach(bet => {
+                            startFollowingCheck(bet.id);
+                        });
+                    } else {
+                        Object.values(followCheckTimers).forEach(timer => clearInterval(timer));
+                        followCheckTimers = {};
+                    }
+                });
+            } else {
+                const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
+                document.getElementById("refreshIntervalDisplay").textContent = 
+                    `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
             }
             
-            let html = `
-                <tr class="bg-gray-50">
-                    <th class="border p-3 text-left font-semibold">ID</th>
-                    <th class="border p-3 text-left font-semibold">描述</th>
-                    <th class="border p-3 text-left font-semibold">投注对象 (赔率)</th>
-                    <th class="border p-3 text-left font-semibold">AI预测</th>
-                    <th class="border p-3 text-left font-semibold">下注时间</th>
-                    <th class="border p-3 text-left font-semibold">金额</th>
-                    <th class="border p-3 text-left font-semibold">赔率×金额</th>
-                    <th class="border p-3 text-left font-semibold">状态</th>
+            return true;
+        } catch (e) {
+            Logger.error(`保存参数失败: ${e.message}`);
+            return false;
+        }
+    }
+
+    // 设置定时任务
+    function setupSchedule() {
+        clearSchedule();
+        
+        if (!CONFIG.state.scheduleEnabled) return;
+        
+        Logger.info(`已启用定时任务 - 启动时间: ${CONFIG.state.scheduleStartTime}, 停止时间: ${CONFIG.state.scheduleStopTime}`);
+        
+        const [startHours, startMinutes] = CONFIG.state.scheduleStartTime.split(':').map(Number);
+        const [stopHours, stopMinutes] = CONFIG.state.scheduleStopTime.split(':').map(Number);
+        
+        const checkSchedule = () => {
+            const now = new Date();
+            const currentTime = now.getHours() * 60 + now.getMinutes();
+            const startTime = startHours * 60 + startMinutes;
+            const stopTime = stopHours * 60 + stopMinutes;
+            
+            const shouldBeRunning = stopTime > startTime 
+                ? currentTime >= startTime && currentTime < stopTime
+                : currentTime >= startTime || currentTime < stopTime;
+            
+            if (shouldBeRunning && !isServiceRunning) {
+                Logger.info(`到达定时启动时间(${CONFIG.state.scheduleStartTime})，自动启动服务`);
+                AudioPlayer.playScheduleStart();
+                startService();
+            } else if (!shouldBeRunning && isServiceRunning) {
+                Logger.info(`到达定时停止时间(${CONFIG.state.scheduleStopTime})，自动停止服务`);
+                AudioPlayer.playScheduleStop();
+                stopService();
+            }
+            
+            scheduleTimers.check = setTimeout(checkSchedule, 5000);
+        };
+        
+        checkSchedule();
+    }
+
+    // 清除定时任务
+    function clearSchedule() {
+        if (scheduleTimers.check) {
+            clearTimeout(scheduleTimers.check);
+            scheduleTimers.check = null;
+        }
+        Logger.info("定时任务已清除");
+    }
+
+    // 更新服务状态显示
+    function updateServiceStatus() {
+        const startBtn = document.getElementById("startServiceBtn");
+        const stopBtn = document.getElementById("stopServiceBtn");
+        const statusIndicator = document.getElementById("serviceStatusIndicator");
+        const statusText = document.getElementById("serviceStatusText");
+        
+        startBtn.disabled = isServiceRunning;
+        stopBtn.disabled = !isServiceRunning;
+        
+        // 更新状态图标
+        if (statusIndicator) {
+            statusIndicator.className = isServiceRunning 
+                ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
+                : "inline-block w-3 h-3 rounded-full bg-gray-400 mr-2";
+            statusIndicator.title = isServiceRunning ? "服务运行中" : "服务已停止";
+        }
+        
+        // 更新按钮样式
+        if (isServiceRunning) {
+            startBtn.classList.add("opacity-50", "cursor-not-allowed");
+            stopBtn.classList.remove("opacity-50", "cursor-not-allowed");
+            statusText.textContent = "服务运行中";
+        } else {
+            startBtn.classList.remove("opacity-50", "cursor-not-allowed");
+            stopBtn.classList.add("opacity-50", "cursor-not-allowed");
+            statusText.textContent = "服务已停止";
+        }
+    }
+
+    // 渲染可投注项目表格
+    function renderBetTable() {
+        const table = document.getElementById("betItemsTable");
+        if (!table) return;
+        
+        if (CONFIG.state.availableBets.length === 0) {
+            table.innerHTML = `
+                <tr>
+                    <td colspan="7" class="border p-8 text-center text-gray-500">
+                        <div class="flex flex-col items-center">
+                            <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                            <span>无可用投注项目</span>
+                        </div>
+                    </td>
                 </tr>
             `;
-            
-            pendingBets.forEach(bet => {
-                let statusClass = "text-primary";
-                let statusBadge = "等待中";
-                
-                if (bet.status === "处理中") {
-                    statusClass = "text-warning";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
-                }
-                if (bet.status === "已完成") {
-                    statusClass = "text-success";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
-                }
-                if (bet.status === "失败") {
-                    statusClass = "text-danger";
-                    statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
-                }
-                
-                // 跟随模式标记
-                const strategyBadge = bet.strategy === "follow" 
-                    ? `<span class="ml-2 text-xs bg-purple/10 text-purple px-1.5 rounded">跟随</span>` 
-                    : "";
-                
-                const betTimeHtml = `<span class="cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${bet.id}')">${bet.betTime.toLocaleString()}</span>`;
-                
-                // AI预测显示
-                const aiPredictionHtml = bet.aiPrediction 
-                    ? `<div class="text-sm text-purple">${bet.aiPrediction}</div>`
-                    : "-";
-                
-                html += `<tr class="table-hover-row transition-colors">
-                    <td class="border p-3">${bet.id}</td>
-                    <td class="border p-3">${bet.heading || '无描述'}</td>
-                    <td class="border p-3 font-bold text-success">${bet.highestOddsTeam} (${bet.highestOdds})${strategyBadge}</td>
-                    <td class="border p-3">${aiPredictionHtml}</td>
-                    <td class="border p-3 text-primary" onclick="event.stopPropagation()">${betTimeHtml}</td>
-                    <td class="border p-3">${bet.betAmount}</td>
-                    <td class="border p-3">${bet.ratioValue ? bet.ratioValue.toFixed(2) : 'N/A'}</td>
-                    <td class="border p-3 ${statusClass}">${statusBadge}</td>
-                </tr>`;
-            });
-            
-            table.innerHTML = html;
+            return;
         }
-
-        // 字符串哈希函数
-        String.prototype.hashCode = function() {
-            let hash = 0;
-            for (let i = 0; i < this.length; i++) {
-                const char = this.charCodeAt(i);
-                hash = ((hash << 5) - hash) + char;
-                hash = hash & hash;
-            }
-            return Math.abs(hash);
-        };
-
-        // 页面初始化
-        document.addEventListener("DOMContentLoaded", () => {
-            // 初始化参数输入框
-            document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
-            document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
-            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
-            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
-            document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
-            document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
-            document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
-            document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
-            document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
+        
+        let html = `
+            <tr class="bg-gray-50">
+                <th class="border p-3 text-left font-semibold">ID</th>
+                <th class="border p-3 text-left font-semibold">描述</th>
+                <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
+                <th class="border p-3 text-left font-semibold">最高赔率</th>
+                <th class="border p-3 text-left font-semibold">AI预测</th>
+                <th class="border p-3 text-left font-semibold">结束时间</th>
+                <th class="border p-3 text-left font-semibold">状态</th>
+            </tr>
+        `;
+        
+        CONFIG.state.availableBets.forEach(item => {
+            const pendingItem = pendingBets.find(bet => bet.id === item.id);
+            const highestOption = getHighestOddsOption(item);
+            const aiPrediction = AIAnalytics.predictionCache[item.id];
             
-            // 初始化定时任务配置
-            document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
-            document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
-            document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
+            let status = "可投注";
+            let statusClass = "text-gray-600";
             
-            // 初始化刷新间隔输入框
-            const hms = convertToHMS(CONFIG.state.refreshInterval);
-            document.getElementById("refreshHoursInput").value = hms.hours;
-            document.getElementById("refreshMinutesInput").value = hms.minutes;
-            document.getElementById("refreshSecondsInput").value = hms.seconds;
-            
-            // 初始化刷新倒计时显示（含毫秒）
-            const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
-            document.getElementById("refreshIntervalDisplay").textContent = 
-                `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
-            
-            // 初始化刷新周期开始时间
-            refreshCycleStartTime = Date.now();
-            
-            // 投注策略切换事件
-            document.getElementById("betStrategySelect").addEventListener("change", function() {
-                CONFIG.state.betStrategy = this.value;
-                Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
-                if (isServiceRunning) {
-                    saveParameters();
-                }
-            });
-            
-            // 定时任务开关事件
-            document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
-                CONFIG.state.scheduleEnabled = this.checked;
-                if (this.checked) {
-                    setupSchedule();
+            // 跟随模式状态显示
+            if (CONFIG.state.betStrategy === "follow") {
+                if (GlobalInfo.followedBets[item.id]) {
+                    status = `<span class="follower-indicator text-success">已跟随</span>`;
+                    statusClass = "";
+                } else if (followCheckTimers[item.id]) {
+                    status = `<span class="follower-indicator text-purple">监控中</span>`;
+                    statusClass = "";
                 } else {
-                    clearSchedule();
+                    status = `<span class="follower-indicator text-gray-600">未监控</span>`;
+                    statusClass = "";
                 }
-            });
+            } 
+            // 其他模式状态显示
+            else if (pendingItem) {
+                status = `待下注 <span class="text-primary cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${item.id}')">${new Date(pendingItem.betTime).toLocaleTimeString()}</span>`;
+                statusClass = "text-primary";
+            } else if (!shouldPlaceBet(item)) {
+                status = `不满足${CONFIG.state.betStrategy}策略`;
+                statusClass = "text-gray-400";
+            }
             
-            // 绑定按钮事件
-            document.getElementById("startServiceBtn").addEventListener("click", startService);
-            document.getElementById("stopServiceBtn").addEventListener("click", stopService);
-            document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
-            document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
-            document.getElementById("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
-            document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
-            document.getElementById("manualRefreshBtn").addEventListener("click", manualRefresh);
-            document.getElementById("detailedLogModeCheckbox").addEventListener("change", function() {
-                CONFIG.state.detailedLogMode = this.checked;
-                Logger.toggleDetailedMode(this.checked);
-            });
-            document.getElementById("aiPredictionEnabledCheckbox").addEventListener("change", function() {
-                CONFIG.state.aiPredictionEnabled = this.checked;
-                Logger.info(`AI预测已${this.checked ? '开启' : '关闭'}`);
-                if (isServiceRunning && CONFIG.state.betStrategy !== "follow") {
-                    CONFIG.state.availableBets.forEach(bet => {
-                        analyzeWithAI(bet);
-                    });
-                }
-            });
-            document.getElementById("pendingFilterSelect").addEventListener("change", function() {
-                CONFIG.state.pendingFilter = this.value;
-                Logger.info(`待投注筛选方式已切换为: ${this.options[this.selectedIndex].text}`);
-                if (isServiceRunning) {
-                    processPendingBets(true);
-                }
-            });
-            document.getElementById("viewLogBtn").addEventListener("click", toggleLogModal);
-            document.getElementById("closeLogModal").addEventListener("click", toggleLogModal);
-            document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
-            document.getElementById("clearLogModalBtn").addEventListener("click", () => Logger.clear());
+            let optionsHtml = "";
+            if (item.optionsList && item.optionsList.length > 0) {
+                item.optionsList.forEach((opt, idx) => {
+                    const isHighest = highestOption && opt.id === highestOption.id;
+                    const isAiPredicted = aiPrediction && opt.text.includes(aiPrediction.prediction);
+                    
+                    let classes = [];
+                    if (isHighest) classes.push("font-bold", "text-success");
+                    if (isAiPredicted) classes.push("odds-highlight");
+                    
+                    optionsHtml += `<div class="${classes.join(' ')} py-1">
+                        ${opt.text} (${opt.odds})
+                        ${isAiPredicted ? `<span class="text-xs bg-purple/10 text-purple px-1.5 rounded ml-1">AI</span>` : ''}
+                    </div>`;
+                });
+            } else {
+                optionsHtml = "无选项";
+            }
             
-            // 初始化表格和服务状态
-            renderBetTable();
-            renderPendingBetsTable();
-            updateServiceStatus();
+            // AI预测显示
+            const aiPredictionHtml = aiPrediction && CONFIG.state.aiPredictionEnabled
+                ? `<div class="text-sm">
+                    ${aiPrediction.prediction}
+                    <div class="text-xs text-gray-500">可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%</div>
+                   </div>`
+                : (CONFIG.state.aiPredictionEnabled ? "分析中..." : "已禁用");
             
-            Logger.info("系统已启动，等待操作...");
-            
-            // 初始化页面可见性状态
-            isPageVisible = document.visibilityState === 'visible';
-            
-            // 启动5分钟自动检测机制（页面加载后默认启动）
-            startFiveMinCheckTimer();
+            html += `<tr class="table-hover-row transition-colors">
+                <td class="border p-3">${item.id}</td>
+                <td class="border p-3">${item.heading || '无描述'}</td>
+                <td class="border p-3">${optionsHtml}</td>
+                <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
+                <td class="border p-3 ${aiPrediction ? 'text-purple' : 'text-gray-500'}">${aiPredictionHtml}</td>
+                <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
+                <td class="border p-3 ${statusClass}" onclick="event.stopPropagation()">${status}</td>
+            </tr>`;
         });
+        
+        table.innerHTML = html;
+    }
+
+    // 渲染待投注项目表格
+    function renderPendingBetsTable() {
+        const table = document.getElementById("pendingBetsTable");
+        if (!table) return;
+        
+        if (pendingBets.length === 0) {
+            table.innerHTML = `
+                <tr>
+                    <td colspan="8" class="border p-8 text-center text-gray-500">
+                        <div class="flex flex-col items-center">
+                            <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
+                            <span>暂无待投注项目</span>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        let html = `
+            <tr class="bg-gray-50">
+                <th class="border p-3 text-left font-semibold">ID</th>
+                <th class="border p-3 text-left font-semibold">描述</th>
+                <th class="border p-3 text-left font-semibold">投注对象 (赔率)</th>
+                <th class="border p-3 text-left font-semibold">AI预测</th>
+                <th class="border p-3 text-left font-semibold">下注时间</th>
+                <th class="border p-3 text-left font-semibold">金额</th>
+                <th class="border p-3 text-left font-semibold">赔率×金额</th>
+                <th class="border p-3 text-left font-semibold">状态</th>
+            </tr>
+        `;
+        
+        pendingBets.forEach(bet => {
+            let statusClass = "text-primary";
+            let statusBadge = "等待中";
+            
+            if (bet.status === "处理中") {
+                statusClass = "text-warning";
+                statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
+            }
+            if (bet.status === "已完成") {
+                statusClass = "text-success";
+                statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
+            }
+            if (bet.status === "失败") {
+                statusClass = "text-danger";
+                statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
+            }
+            
+            // 跟随模式标记
+            const strategyBadge = bet.strategy === "follow" 
+                ? `<span class="ml-2 text-xs bg-purple/10 text-purple px-1.5 rounded">跟随</span>` 
+                : "";
+            
+            const betTimeHtml = `<span class="cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${bet.id}')">${bet.betTime.toLocaleString()}</span>`;
+            
+            // AI预测显示
+            const aiPredictionHtml = bet.aiPrediction 
+                ? `<div class="text-sm text-purple">${bet.aiPrediction}</div>`
+                : "-";
+            
+            html += `<tr class="table-hover-row transition-colors">
+                <td class="border p-3">${bet.id}</td>
+                <td class="border p-3">${bet.heading || '无描述'}</td>
+                <td class="border p-3 font-bold text-success">${bet.highestOddsTeam} (${bet.highestOdds})${strategyBadge}</td>
+                <td class="border p-3">${aiPredictionHtml}</td>
+                <td class="border p-3 text-primary" onclick="event.stopPropagation()">${betTimeHtml}</td>
+                <td class="border p-3">${bet.betAmount}</td>
+                <td class="border p-3">${bet.ratioValue ? bet.ratioValue.toFixed(2) : 'N/A'}</td>
+                <td class="border p-3 ${statusClass}">${statusBadge}</td>
+            </tr>`;
+        });
+        
+        table.innerHTML = html;
+    }
+
+    // 字符串哈希函数
+    String.prototype.hashCode = function() {
+        let hash = 0;
+        for (let i = 0; i < this.length; i++) {
+            const char = this.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        return Math.abs(hash);
+    };
+
+    // 页面初始化
+    document.addEventListener("DOMContentLoaded", () => {
+        // 初始化参数输入框
+        document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
+        document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
+        document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
+        document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
+        document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
+        document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
+        document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
+        document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
+        document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
+        
+        // 初始化定时任务配置
+        document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
+        document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
+        document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
+        
+        // 初始化刷新间隔输入框
+        const hms = convertToHMS(CONFIG.state.refreshInterval);
+        document.getElementById("refreshHoursInput").value = hms.hours;
+        document.getElementById("refreshMinutesInput").value = hms.minutes;
+        document.getElementById("refreshSecondsInput").value = hms.seconds;
+        
+        // 初始化刷新倒计时显示（含毫秒）
+        const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
+        document.getElementById("refreshIntervalDisplay").textContent = 
+            `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
+        
+        // 初始化刷新周期开始时间
+        refreshCycleStartTime = Date.now();
+        
+        // 投注策略切换事件
+        document.getElementById("betStrategySelect").addEventListener("change", function() {
+            CONFIG.state.betStrategy = this.value;
+            Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
+            if (isServiceRunning) {
+                saveParameters();
+            }
+        });
+        
+        // 定时任务开关事件
+        document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
+            CONFIG.state.scheduleEnabled = this.checked;
+            if (this.checked) {
+                setupSchedule();
+            } else {
+                clearSchedule();
+            }
+        });
+        
+        // 绑定按钮事件
+        document.getElementById("startServiceBtn").addEventListener("click", startService);
+        document.getElementById("stopServiceBtn").addEventListener("click", stopService);
+        document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
+        document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
+        document.getElementById("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
+        document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
+        document.getElementById("manualRefreshBtn").addEventListener("click", manualRefresh);
+        document.getElementById("detailedLogModeCheckbox").addEventListener("change", function() {
+            CONFIG.state.detailedLogMode = this.checked;
+            Logger.toggleDetailedMode(this.checked);
+        });
+        document.getElementById("aiPredictionEnabledCheckbox").addEventListener("change", function() {
+            CONFIG.state.aiPredictionEnabled = this.checked;
+            Logger.info(`AI预测已${this.checked ? '开启' : '关闭'}`);
+            if (isServiceRunning && CONFIG.state.betStrategy !== "follow") {
+                CONFIG.state.availableBets.forEach(bet => {
+                    analyzeWithAI(bet);
+                });
+            }
+        });
+        document.getElementById("pendingFilterSelect").addEventListener("change", function() {
+            CONFIG.state.pendingFilter = this.value;
+            Logger.info(`待投注筛选方式已切换为: ${this.options[this.selectedIndex].text}`);
+            if (isServiceRunning) {
+                processPendingBets(true);
+            }
+        });
+        document.getElementById("viewLogBtn").addEventListener("click", toggleLogModal);
+        document.getElementById("closeLogModal").addEventListener("click", toggleLogModal);
+        document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
+        document.getElementById("clearLogModalBtn").addEventListener("click", () => Logger.clear());
+        
+        // 初始化表格和服务状态
+        renderBetTable();
+        renderPendingBetsTable();
+        updateServiceStatus();
+        
+        Logger.info("系统已启动，等待操作...");
+        
+        // 初始化页面可见性状态
+        isPageVisible = document.visibilityState === 'visible';
+        
+        // 启动5分钟自动检测机制（页面加载后默认启动）
+        startFiveMinCheckTimer();
+    });
     </script>
 </head>
 <body class="bg-gray-50 p-4 md:p-6">

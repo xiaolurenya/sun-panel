@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
     <script>
         // 配置Tailwind自定义样式
         tailwind.config = {
@@ -61,6 +62,17 @@
                 left: 0;
                 color: #7B61FF;
                 font-weight: bold;
+            }
+            .stat-card {
+                border-radius: 8px;
+                padding: 1.5rem;
+                background: white;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                transition: all 0.3s;
+            }
+            .stat-card:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
             }
         }
     </style>
@@ -142,7 +154,9 @@
             historicalData: {}, // 存储历史数据 {teamId: {多维度数据}}
             predictionCache: {}, // 缓存预测结果 {gameId: {prediction, confidence, analysis}}
             matchHistoryCache: {}, // 队伍间对战历史缓存
-            lastUpdateTime: {} // 数据更新时间戳（确保时效性）
+            lastUpdateTime: {}, // 数据更新时间戳（确保时效性）
+            betHistory: [], // 新增：AI关联的历史投注记录
+            statCache: {} // 新增：统计数据缓存
         };
         
         const GlobalInfo = {
@@ -219,7 +233,7 @@
                 autoRefresh: true,
                 refreshInterval: 30,
                 targetUserId: "205809",
-                advanceSeconds: 5, // 提前下注时间
+                advanceSeconds: 3, // 提前下注时间
                 amountRange: 100, // 金额波动范围（用户可修改）
                 baseAmount: 1000, // 基础金额（用户可修改）
                 betStrategy: "higher_odds",
@@ -287,6 +301,8 @@
                         startFiveMinCheckTimer();
                     }, 4000);
                     
+                    // 加载历史战绩
+                    loadAIHistoryFromLocalStorage();
                     return true;
                 } else {
                     Logger.error(`API Key验证失败: 响应格式不正确`);
@@ -313,6 +329,8 @@
                             startFiveMinCheckTimer();
                         }, 4000);
                         
+                        // 加载历史战绩
+                        loadAIHistoryFromLocalStorage();
                         return true;
                     } else {
                         Logger.error(`备用服务器API Key验证失败: 响应格式不正确`);
@@ -628,7 +646,7 @@
                     pendingBets.unshift(followBet);
                     renderPendingBetsTable();
                     
-                    const success = await placeFollowBet(followBet, targetBet.optionid);
+                    const success = await placeFollowBet(followCheckTimers[gameId], followBet, targetBet.optionid);
                     
                     const index = pendingBets.findIndex(b => b.id === gameId && b.status === "处理中");
                     if (index !== -1) {
@@ -660,7 +678,7 @@
         }
 
         // 执行跟随投注
-        async function placeFollowBet(followBet, optionId) {
+        async function placeFollowBet(timerId, followBet, optionId) {
             updateLastActivity();
             try {
                 Logger.info(`开始跟随投注项目 #${followBet.id}，选项: ${followBet.highestOddsTeam}, 金额: ${followBet.betAmount}`);
@@ -689,6 +707,20 @@
                 }
                 GlobalInfo.bet_mask[followBet.id].push(optionId);
                 
+                // 新增：记录AI关联的跟随投注历史
+                recordAIHistory({
+                    betId: followBet.id,
+                    type: "follow",
+                    status: "success",
+                    betTime: new Date().toLocaleString(),
+                    team: followBet.highestOddsTeam,
+                    odds: followBet.highestOdds,
+                    amount: followBet.betAmount,
+                    aiPrediction: "跟随目标用户",
+                    confidence: 0,
+                    profit: (followBet.highestOdds * followBet.betAmount) - followBet.betAmount
+                });
+                
                 return true;
             } catch (e) {
                 Logger.warning("主服务器跟随投注失败，尝试备用服务器...");
@@ -701,6 +733,19 @@
                     
                     if (result.code !== 0) {
                         Logger.error(`备用服务器跟随投注失败: ${result.msg || '未知错误'}`);
+                        // 新增：记录失败历史
+                        recordAIHistory({
+                            betId: followBet.id,
+                            type: "follow",
+                            status: "failed",
+                            betTime: new Date().toLocaleString(),
+                            team: followBet.highestOddsTeam,
+                            odds: followBet.highestOdds,
+                            amount: followBet.betAmount,
+                            aiPrediction: "跟随目标用户",
+                            confidence: 0,
+                            profit: 0
+                        });
                         return false;
                     }
                     
@@ -711,9 +756,36 @@
                     }
                     GlobalInfo.bet_mask[followBet.id].push(optionId);
                     
+                    // 新增：记录AI关联的跟随投注历史
+                    recordAIHistory({
+                        betId: followBet.id,
+                        type: "follow",
+                        status: "success",
+                        betTime: new Date().toLocaleString(),
+                        team: followBet.highestOddsTeam,
+                        odds: followBet.highestOdds,
+                        amount: followBet.betAmount,
+                        aiPrediction: "跟随目标用户",
+                        confidence: 0,
+                        profit: (followBet.highestOdds * followBet.betAmount) - followBet.betAmount
+                    });
+                    
                     return true;
                 } catch (e2) {
                     Logger.error(`跟随投注请求失败: ${e2.message}`);
+                    // 新增：记录失败历史
+                    recordAIHistory({
+                        betId: followBet.id,
+                        type: "follow",
+                        status: "failed",
+                        betTime: new Date().toLocaleString(),
+                        team: followBet.highestOddsTeam,
+                        odds: followBet.highestOdds,
+                        amount: followBet.betAmount,
+                        aiPrediction: "跟随目标用户",
+                        confidence: 0,
+                        profit: 0
+                    });
                     return false;
                 }
             }
@@ -1093,6 +1165,7 @@
                 let choices = [];
                 let myBonuses = [];
                 let currentOdds = 0;
+                let aiPrediction = null;
 
                 if (CONFIG.state.betStrategy === "higher_odds") {
                     const freshBetItem = CONFIG.state.availableBets.find(item => item.id === betItem.id);
@@ -1104,7 +1177,7 @@
                         return false;
                     }
                     
-                    const aiPrediction = AIAnalytics.predictionCache[betItem.id];
+                    aiPrediction = AIAnalytics.predictionCache[betItem.id];
                     let selectedOption;
                     
                     if (aiPrediction && CONFIG.state.aiPredictionEnabled) {
@@ -1180,6 +1253,20 @@
                         // 下注失败：恢复倒计时显示
                         startRefreshCountdown();
                         isBettingInProgress = false;
+                        
+                        // 新增：记录AI投注失败历史
+                        recordAIHistory({
+                            betId: betItem.id,
+                            type: CONFIG.state.betStrategy,
+                            status: "failed",
+                            betTime: new Date().toLocaleString(),
+                            team: betItem.highestOddsTeam || "未知",
+                            odds: currentOdds || 0,
+                            amount: bonus,
+                            aiPrediction: aiPrediction ? aiPrediction.prediction : "无",
+                            confidence: aiPrediction ? aiPrediction.confidence : 0,
+                            profit: 0
+                        });
                         return false;
                     }
                     
@@ -1189,6 +1276,21 @@
                         GlobalInfo.bet_mask[betItem.id] = [];
                     }
                     GlobalInfo.bet_mask[betItem.id].push(optId);
+                    
+                    // 新增：记录AI投注成功历史
+                    const profit = (currentOdds * bonus) - bonus;
+                    recordAIHistory({
+                        betId: betItem.id,
+                        type: CONFIG.state.betStrategy,
+                        status: "success",
+                        betTime: new Date().toLocaleString(),
+                        team: betItem.highestOddsTeam || "未知",
+                        odds: currentOdds || 0,
+                        amount: bonus,
+                        aiPrediction: aiPrediction ? aiPrediction.prediction : "无",
+                        confidence: aiPrediction ? aiPrediction.confidence : 0,
+                        profit: profit
+                    });
                     
                     if (i < choices.length - 1) {
                         await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
@@ -1248,6 +1350,20 @@
                             // 下注失败：恢复倒计时显示
                             startRefreshCountdown();
                             isBettingInProgress = false;
+                            
+                            // 新增：记录AI投注失败历史
+                            recordAIHistory({
+                                betId: betItem.id,
+                                type: CONFIG.state.betStrategy,
+                                status: "failed",
+                                betTime: new Date().toLocaleString(),
+                                team: betItem.highestOddsTeam || "未知",
+                                odds: currentOdds || 0,
+                                amount: bonus,
+                                aiPrediction: aiPrediction ? aiPrediction.prediction : "无",
+                                confidence: aiPrediction ? aiPrediction.confidence : 0,
+                                profit: 0
+                            });
                             return false;
                         }
                         
@@ -1257,6 +1373,21 @@
                             GlobalInfo.bet_mask[betItem.id] = [];
                         }
                         GlobalInfo.bet_mask[betItem.id].push(optId);
+                        
+                        // 新增：记录AI投注成功历史
+                        const profit = (currentOdds * bonus) - bonus;
+                        recordAIHistory({
+                            betId: betItem.id,
+                            type: CONFIG.state.betStrategy,
+                            status: "success",
+                            betTime: new Date().toLocaleString(),
+                            team: betItem.highestOddsTeam || "未知",
+                            odds: currentOdds || 0,
+                            amount: bonus,
+                            aiPrediction: aiPrediction ? aiPrediction.prediction : "无",
+                            confidence: aiPrediction ? aiPrediction.confidence : 0,
+                            profit: profit
+                        });
                         
                         if (i < choices.length - 1) {
                             await new Promise(resolve => setTimeout(resolve, CONFIG.state.checkInterval * 1000));
@@ -1299,6 +1430,20 @@
                     // 下注失败：恢复倒计时显示
                     startRefreshCountdown();
                     isBettingInProgress = false;
+                    
+                    // 新增：记录AI投注失败历史
+                    recordAIHistory({
+                        betId: betItem.id,
+                        type: CONFIG.state.betStrategy,
+                        status: "failed",
+                        betTime: new Date().toLocaleString(),
+                        team: betItem.highestOddsTeam || "未知",
+                        odds: currentOdds || 0,
+                        amount: myBonuses[0] || 0,
+                        aiPrediction: aiPrediction ? aiPrediction.prediction : "无",
+                        confidence: aiPrediction ? aiPrediction.confidence : 0,
+                        profit: 0
+                    });
                     return false;
                 }
             }
@@ -1429,7 +1574,8 @@
             
             // 如果是手动启动，启动自动刷新和5分钟检测
             if (!isFromCheck) {
-                startAutoRefresh();
+                startAuto
+				            Refresh();
                 startFiveMinCheckTimer();
             }
             
@@ -1694,7 +1840,7 @@
             }
         }
 
-        // 手动修改待投注项目时间的功能
+        // 手动修改待下注项目时间的功能
         function editPendingBetTime(betId) {
             const bet = pendingBets.find(b => b.id === betId);
             if (!bet) return;
@@ -1773,6 +1919,8 @@
                         processPendingBets(true);
                         renderBetTable();
                         renderPendingBetsTable();
+                        renderAIHistoryTable(); // 新增：保存参数后刷新AI历史战绩
+                        renderAIStats(); // 新增：保存参数后刷新AI统计数据
                         
                         startBetChecker();
                         
@@ -1840,576 +1988,1258 @@
                 
                 scheduleTimers.check = setTimeout(checkSchedule, 5000);
             };
-                checkSchedule();
-            }
+            checkSchedule();
+        }
 
-            // 清除定时任务
-            function clearSchedule() {
-                if (scheduleTimers.check) {
-                    clearTimeout(scheduleTimers.check);
-                    scheduleTimers.check = null;
-                }
-                Logger.info("定时任务已清除");
+        // 清除定时任务
+        function clearSchedule() {
+            if (scheduleTimers.check) {
+                clearTimeout(scheduleTimers.check);
+                scheduleTimers.check = null;
             }
+            Logger.info("定时任务已清除");
+        }
 
-            // 更新服务状态显示
-            function updateServiceStatus() {
-                const startBtn = document.getElementById("startServiceBtn");
-                const stopBtn = document.getElementById("stopServiceBtn");
-                const statusIndicator = document.getElementById("serviceStatusIndicator");
-                const statusText = document.getElementById("serviceStatusText");
-                
-                startBtn.disabled = isServiceRunning;
-                stopBtn.disabled = !isServiceRunning;
-                
-                // 更新状态图标
-                if (statusIndicator) {
-                    statusIndicator.className = isServiceRunning 
-                        ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
-                        : "inline-block w-3 h-3 rounded-full bg-gray-400 mr-2";
-                    statusIndicator.title = isServiceRunning ? "服务运行中" : "服务已停止";
-                }
-                
-                // 更新按钮样式
-                if (isServiceRunning) {
-                    startBtn.classList.add("opacity-50", "cursor-not-allowed");
-                    stopBtn.classList.remove("opacity-50", "cursor-not-allowed");
-                    statusText.textContent = "服务运行中";
-                } else {
-                    startBtn.classList.remove("opacity-50", "cursor-not-allowed");
-                    stopBtn.classList.add("opacity-50", "cursor-not-allowed");
-                    statusText.textContent = "服务已停止";
-                }
+        // 更新服务状态显示
+        function updateServiceStatus() {
+            const startBtn = document.getElementById("startServiceBtn");
+            const stopBtn = document.getElementById("stopServiceBtn");
+            const statusIndicator = document.getElementById("serviceStatusIndicator");
+            const statusText = document.getElementById("serviceStatusText");
+            
+            startBtn.disabled = isServiceRunning;
+            stopBtn.disabled = !isServiceRunning;
+            
+            // 更新状态图标
+            if (statusIndicator) {
+                statusIndicator.className = isServiceRunning 
+                    ? "inline-block w-3 h-3 rounded-full bg-success mr-2" 
+                    : "inline-block w-3 h-3 rounded-full bg-gray-400 mr-2";
+                statusIndicator.title = isServiceRunning ? "服务运行中" : "服务已停止";
             }
+            
+            // 更新按钮样式
+            if (isServiceRunning) {
+                startBtn.classList.add("opacity-50", "cursor-not-allowed");
+                stopBtn.classList.remove("opacity-50", "cursor-not-allowed");
+                statusText.textContent = "服务运行中";
+            } else {
+                startBtn.classList.remove("opacity-50", "cursor-not-allowed");
+                stopBtn.classList.add("opacity-50", "cursor-not-allowed");
+                statusText.textContent = "服务已停止";
+            }
+        }
 
-            // 渲染可投注项目表格
-            function renderBetTable() {
-                const table = document.getElementById("betItemsTable");
-                if (!table) return;
-                
-                if (CONFIG.state.availableBets.length === 0) {
-                    table.innerHTML = `
-                        <tr>
-                            <td colspan="7" class="border p-8 text-center text-gray-500">
-                                <div class="flex flex-col items-center">
-                                    <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
-                                    <span>无可用投注项目</span>
-                                </div>
-                            </td>
-                        </tr>
-                    `;
-                    return;
-                }
-                
-                let html = `
-                    <tr class="bg-gray-50">
-                        <th class="border p-3 text-left font-semibold">ID</th>
-                        <th class="border p-3 text-left font-semibold">描述</th>
-                        <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
-                        <th class="border p-3 text-left font-semibold">最高赔率</th>
-                        <th class="border p-3 text-left font-semibold">AI预测</th>
-                        <th class="border p-3 text-left font-semibold">结束时间</th>
-                        <th class="border p-3 text-left font-semibold">状态</th>
-                    </tr>
-                `;
-                
-                CONFIG.state.availableBets.forEach(item => {
-                    const pendingItem = pendingBets.find(bet => bet.id === item.id);
-                    const highestOption = getHighestOddsOption(item);
-                    const aiPrediction = AIAnalytics.predictionCache[item.id];
-                    
-                    let status = "可投注";
-                    let statusClass = "text-gray-600";
-                    
-                    // 跟随模式状态显示
-                    if (CONFIG.state.betStrategy === "follow") {
-                        if (GlobalInfo.followedBets[item.id]) {
-                            status = `<span class="follower-indicator text-success">已跟随</span>`;
-                            statusClass = "";
-                        } else if (followCheckTimers[item.id]) {
-                            status = `<span class="follower-indicator text-purple">监控中</span>`;
-                            statusClass = "";
-                        } else {
-                            status = `<span class="follower-indicator text-gray-600">未监控</span>`;
-                            statusClass = "";
-                        }
-                    } 
-                    // 其他模式状态显示
-                    else if (pendingItem) {
-                        status = `待下注 <span class="text-primary cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${item.id}')">${new Date(pendingItem.betTime).toLocaleTimeString()}</span>`;
-                        statusClass = "text-primary";
-                    } else if (!shouldPlaceBet(item)) {
-                        status = `不满足${CONFIG.state.betStrategy}策略`;
-                        statusClass = "text-gray-400";
-                    }
-                    
-                    let optionsHtml = "";
-                    if (item.optionsList && item.optionsList.length > 0) {
-                        item.optionsList.forEach((opt, idx) => {
-                            const isHighest = highestOption && opt.id === highestOption.id;
-                            const isAiPredicted = aiPrediction && opt.text.includes(aiPrediction.prediction);
-                            
-                            let classes = [];
-                            if (isHighest) classes.push("font-bold", "text-success");
-                            if (isAiPredicted) classes.push("odds-highlight");
-                            
-                            optionsHtml += `<div class="${classes.join(' ')} py-1">
-                                ${opt.text} (${opt.odds})
-                                ${isAiPredicted ? `<span class="text-xs bg-purple/10 text-purple px-1.5 rounded ml-1">AI</span>` : ''}
-                            </div>`;
-                        });
-                    } else {
-                        optionsHtml = "无选项";
-                    }
-                    
-                    // AI预测显示（增强版：新增hover提示展示预测依据）
-                    const aiPredictionHtml = aiPrediction && CONFIG.state.aiPredictionEnabled
-                        ? `<div class="text-sm relative group">
-                            ${aiPrediction.prediction}
-                            <div class="text-xs text-gray-500">可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%</div>
-                            <!-- 新增：预测依据hover提示 -->
-                            <div class="absolute bottom-full left-0 mb-1 px-3 py-2 bg-dark text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 w-max">
-                                预测依据：${aiPrediction.analysis || '综合实力评估'}
+        // 渲染可投注项目表格
+        function renderBetTable() {
+            const table = document.getElementById("betItemsTable");
+            if (!table) return;
+            
+            if (CONFIG.state.availableBets.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
+                                <span>无可用投注项目</span>
                             </div>
-                           </div>`
-                        : (CONFIG.state.aiPredictionEnabled ? "<div class='text-sm text-gray-500'>深度分析中...</div>" : "已禁用");
-                    
-                    html += `<tr class="table-hover-row transition-colors">
-                        <td class="border p-3">${item.id}</td>
-                        <td class="border p-3">${item.heading || '无描述'}</td>
-                        <td class="border p-3">${optionsHtml}</td>
-                        <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
-                        <td class="border p-3 ${aiPrediction ? 'text-purple' : 'text-gray-500'}">${aiPredictionHtml}</td>
-                        <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
-                        <td class="border p-3 ${statusClass}" onclick="event.stopPropagation()">${status}</td>
-                    </tr>`;
-                });
-                
-                table.innerHTML = html;
+                        </td>
+                    </tr>
+                `;
+                return;
             }
-
-            // 渲染待投注项目表格
-            function renderPendingBetsTable() {
-                const table = document.getElementById("pendingBetsTable");
-                if (!table) return;
+            
+            let html = `
+                <tr class="bg-gray-50">
+                    <th class="border p-3 text-left font-semibold">ID</th>
+                    <th class="border p-3 text-left font-semibold">描述</th>
+                    <th class="border p-3 text-left font-semibold">选项/队伍 (赔率)</th>
+                    <th class="border p-3 text-left font-semibold">最高赔率</th>
+                    <th class="border p-3 text-left font-semibold">AI预测</th>
+                    <th class="border p-3 text-left font-semibold">结束时间</th>
+                    <th class="border p-3 text-left font-semibold">状态</th>
+                </tr>
+            `;
+            
+            CONFIG.state.availableBets.forEach(item => {
+                const pendingItem = pendingBets.find(bet => bet.id === item.id);
+                const highestOption = getHighestOddsOption(item);
+                const aiPrediction = AIAnalytics.predictionCache[item.id];
                 
-                if (pendingBets.length === 0) {
-                    table.innerHTML = `
-                        <tr>
-                            <td colspan="8" class="border p-8 text-center text-gray-500">
-                                <div class="flex flex-col items-center">
-                                    <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
-                                    <span>暂无待投注项目</span>
-                                </div>
+                let status = "可投注";
+                let statusClass = "text-gray-600";
+                
+                // 跟随模式状态显示
+                if (CONFIG.state.betStrategy === "follow") {
+                    if (GlobalInfo.followedBets[item.id]) {
+                        status = `<span class="follower-indicator text-success">已跟随</span>`;
+                        statusClass = "";
+                    } else if (followCheckTimers[item.id]) {
+                        status = `<span class="follower-indicator text-purple">监控中</span>`;
+                        statusClass = "";
+                    } else {
+                        status = `<span class="follower-indicator text-gray-600">未监控</span>`;
+                        statusClass = "";
+                    }
+                } 
+                // 其他模式状态显示
+                else if (pendingItem) {
+                    status = `待下注 <span class="text-primary cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${item.id}')">${new Date(pendingItem.betTime).toLocaleTimeString()}</span>`;
+                    statusClass = "text-primary";
+                } else if (!shouldPlaceBet(item)) {
+                    status = `不满足${CONFIG.state.betStrategy}策略`;
+                    statusClass = "text-gray-400";
+                }
+                
+                let optionsHtml = "";
+                if (item.optionsList && item.optionsList.length > 0) {
+                    item.optionsList.forEach((opt, idx) => {
+                        const isHighest = highestOption && opt.id === highestOption.id;
+                        const isAiPredicted = aiPrediction && opt.text.includes(aiPrediction.prediction);
+                        
+                        let classes = [];
+                        if (isHighest) classes.push("font-bold", "text-success");
+                        if (isAiPredicted) classes.push("odds-highlight");
+                        
+                        optionsHtml += `<div class="${classes.join(' ')} py-1">
+                            ${opt.text} (${opt.odds})
+                            ${isAiPredicted ? `<span class="text-xs bg-purple/10 text-purple px-1.5 rounded ml-1">AI</span>` : ''}
+                        </div>`;
+                    });
+                } else {
+                    optionsHtml = "无选项";
+                }
+                
+                // AI预测显示（增强版：新增hover提示展示预测依据）
+                const aiPredictionHtml = aiPrediction && CONFIG.state.aiPredictionEnabled
+                    ? `<div class="text-sm relative group">
+                        ${aiPrediction.prediction}
+                        <div class="text-xs text-gray-500">可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%</div>
+                        <!-- 新增：预测依据hover提示 -->
+                        <div class="absolute bottom-full left-0 mb-1 px-3 py-2 bg-dark text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 w-max">
+                            预测依据：${aiPrediction.analysis || '综合实力评估'}
+                        </div>
+                       </div>`
+                    : (CONFIG.state.aiPredictionEnabled ? "<div class='text-sm text-gray-500'>深度分析中...</div>" : "已禁用");
+                
+                html += `<tr class="table-hover-row transition-colors">
+                    <td class="border p-3">${item.id}</td>
+                    <td class="border p-3">${item.heading || '无描述'}</td>
+                    <td class="border p-3">${optionsHtml}</td>
+                    <td class="border p-3 text-success font-bold">${highestOption ? highestOption.odds : 'N/A'}</td>
+                    <td class="border p-3 ${aiPrediction ? 'text-purple' : 'text-gray-500'}">${aiPredictionHtml}</td>
+                    <td class="border p-3">${new Date(item.endtime).toLocaleString()}</td>
+                    <td class="border p-3 ${statusClass}" onclick="event.stopPropagation()">${status}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        // 渲染待投注项目表格
+        function renderPendingBetsTable() {
+            const table = document.getElementById("pendingBetsTable");
+            if (!table) return;
+            
+            if (pendingBets.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="8" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
+                                <span>暂无待投注项目</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = `
+                <tr class="bg-gray-50">
+                    <th class="border p-3 text-left font-semibold">ID</th>
+                    <th class="border p-3 text-left font-semibold">描述</th>
+                    <th class="border p-3 text-left font-semibold">投注对象 (赔率)</th>
+                    <th class="border p-3 text-left font-semibold">AI预测</th>
+                    <th class="border p-3 text-left font-semibold">下注时间</th>
+                    <th class="border p-3 text-left font-semibold">金额</th>
+                    <th class="border p-3 text-left font-semibold">赔率×金额</th>
+                    <th class="border p-3 text-left font-semibold">状态</th>
+                </tr>
+            `;
+            
+            pendingBets.forEach(bet => {
+                let statusClass = "text-primary";
+                let statusBadge = "等待中";
+                
+                if (bet.status === "处理中") {
+                    statusClass = "text-warning";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
+                }
+                if (bet.status === "已完成") {
+                    statusClass = "text-success";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
+                }
+                if (bet.status === "失败") {
+                    statusClass = "text-danger";
+                    statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
+                }
+                
+                // 跟随模式标记
+                const strategyBadge = bet.strategy === "follow" 
+                    ? `<span class="ml-2 text-xs bg-purple/10 text-purple px-1.5 rounded">跟随</span>` 
+                    : "";
+                
+                const betTimeHtml = `<span class="cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${bet.id}')">${bet.betTime.toLocaleString()}</span>`;
+                
+                // AI预测显示
+                const aiPredictionHtml = bet.aiPrediction 
+                    ? `<div class="text-sm text-purple">${bet.aiPrediction}</div>`
+                    : "-";
+                
+                html += `<tr class="table-hover-row transition-colors">
+                    <td class="border p-3">${bet.id}</td>
+                    <td class="border p-3">${bet.heading || '无描述'}</td>
+                    <td class="border p-3 font-bold text-success">${bet.highestOddsTeam} (${bet.highestOdds})${strategyBadge}</td>
+                    <td class="border p-3">${aiPredictionHtml}</td>
+                    <td class="border p-3 text-primary" onclick="event.stopPropagation()">${betTimeHtml}</td>
+                    <td class="border p-3">${bet.betAmount}</td>
+                    <td class="border p-3">${bet.ratioValue ? bet.ratioValue.toFixed(2) : 'N/A'}</td>
+                    <td class="border p-3 ${statusClass}">${statusBadge}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        // ------------------------------
+        // 新增：AI历史战绩核心功能
+        // ------------------------------
+        // 1. 记录AI关联的投注历史
+        function recordAIHistory(historyItem) {
+            // 去重：避免重复记录同一投注
+            const isDuplicate = AIAnalytics.betHistory.some(item => 
+                item.betId === historyItem.betId && 
+                item.betTime === historyItem.betTime && 
+                item.amount === historyItem.amount
+            );
+            
+            if (!isDuplicate) {
+                AIAnalytics.betHistory.unshift(historyItem); // 最新记录排在前面
+                // 限制历史记录数量（最多100条）
+                if (AIAnalytics.betHistory.length > 100) {
+                    AIAnalytics.betHistory.pop();
+                }
+                saveAIHistoryToLocalStorage(); // 保存到本地存储
+                renderAIHistoryTable(); // 刷新表格
+                renderAIStats(); // 刷新统计数据
+                Logger.info(`已记录AI投注历史: 项目#${historyItem.betId}，状态: ${historyItem.status}，盈利: ${historyItem.profit}`, true);
+            }
+        }
+
+        // 2. 保存AI历史战绩到本地存储
+        function saveAIHistoryToLocalStorage() {
+            try {
+                localStorage.setItem('AIBetHistory', JSON.stringify(AIAnalytics.betHistory));
+                Logger.info("AI历史战绩已保存到本地存储", true);
+            } catch (e) {
+                Logger.error(`保存AI历史战绩失败: ${e.message}`, true);
+            }
+        }
+
+        // 3. 从本地存储加载AI历史战绩
+        function loadAIHistoryFromLocalStorage() {
+            try {
+                const savedHistory = localStorage.getItem('AIBetHistory');
+                if (savedHistory) {
+                    AIAnalytics.betHistory = JSON.parse(savedHistory);
+                    Logger.info(`从本地存储加载AI历史战绩（共${AIAnalytics.betHistory.length}条）`, true);
+                    renderAIHistoryTable();
+                    renderAIStats();
+                } else {
+                    Logger.info("本地存储中无AI历史战绩", true);
+                }
+            } catch (e) {
+                Logger.error(`加载AI历史战绩失败: ${e.message}`, true);
+                AIAnalytics.betHistory = [];
+            }
+        }
+
+        // 4. 渲染AI历史战绩表格
+        function renderAIHistoryTable() {
+            const table = document.getElementById("aiHistoryTable");
+            if (!table) return;
+            
+            if (AIAnalytics.betHistory.length === 0) {
+                table.innerHTML = `
+                    <tr>
+                        <td colspan="9" class="border p-8 text-center text-gray-500">
+                            <div class="flex flex-col items-center">
+                                <i class="fa fa-history text-3xl mb-2 text-gray-300"></i>
+                                <span>暂无AI关联的投注历史</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
+            let html = `
+                <tr class="bg-gray-50">
+                    <th class="border p-3 text-left font-semibold">投注时间</th>
+                    <th class="border p-3 text-left font-semibold">项目ID</th>
+                    <th class="border p-3 text-left font-semibold">投注类型</th>
+                    <th class="border p-3 text-left font-semibold">投注队伍</th>
+                    <th class="border p-3 text-left font-semibold">赔率</th>
+                    <th class="border p-3 text-left font-semibold">投注金额</th>
+                    <th class="border p-3 text-left font-semibold">AI预测</th>
+                    <th class="border p-3 text-left font-semibold">状态</th>
+                    <th class="border p-3 text-left font-semibold">盈利</th>
+                </tr>
+            `;
+            
+            AIAnalytics.betHistory.forEach(item => {
+                // 状态样式
+                let statusClass = "text-gray-600";
+                let statusText = item.status;
+                if (item.status === "success") {
+                    statusClass = "text-success";
+                    statusText = "<span class='flex items-center'><i class='fa fa-check mr-1'></i> 成功</span>";
+                } else if (item.status === "failed") {
+                    statusClass = "text-danger";
+                    statusText = "<span class='flex items-center'><i class='fa fa-times mr-1'></i> 失败</span>";
+                }
+                
+                // 盈利样式
+                let profitClass = "text-gray-600";
+                if (item.profit > 0) profitClass = "text-success";
+                if (item.profit < 0) profitClass = "text-danger";
+                const profitText = item.profit >= 0 ? `+${item.profit.toFixed(2)}` : item.profit.toFixed(2);
+                
+                // 投注类型显示
+                const typeMap = {
+                    "higher_odds": "高赔率",
+                    "larger": "押大",
+                    "smaller": "押小",
+                    "follow": "跟随"
+                };
+                const typeText = typeMap[item.type] || item.type;
+                
+                html += `<tr class="table-hover-row transition-colors">
+                    <td class="border p-3">${item.betTime}</td>
+                    <td class="border p-3">${item.betId}</td>
+                    <td class="border p-3">${typeText}</td>
+                    <td class="border p-3">${item.team}</td>
+                    <td class="border p-3">${item.odds.toFixed(2)}</td>
+                    <td class="border p-3">${item.amount}</td>
+                    <td class="border p-3 text-purple">${item.aiPrediction || '-'}</td>
+                    <td class="border p-3 ${statusClass}">${statusText}</td>
+                    <td class="border p-3 ${profitClass} font-medium">${profitText}</td>
+                </tr>`;
+            });
+            
+            table.innerHTML = html;
+        }
+
+        // 5. 计算AI历史战绩统计数据
+        function calculateAIStats() {
+            const history = AIAnalytics.betHistory;
+            if (history.length === 0) {
+                return {
+                    totalCount: 0,
+                    successCount: 0,
+                    successRate: 0,
+                    totalAmount: 0,
+                    totalProfit: 0,
+                    avgProfit: 0,
+                    maxProfit: 0,
+                    minProfit: 0,
+                    typeStats: {}
+                };
+            }
+            
+            // 基础统计
+            const totalCount = history.length;
+            const successCount = history.filter(item => item.status === "success").length;
+            const successRate = (successCount / totalCount) * 100;
+            const totalAmount = history.reduce((sum, item) => sum + item.amount, 0);
+            const totalProfit = history.reduce((sum, item) => sum + item.profit, 0);
+            const avgProfit = totalProfit / totalCount;
+            
+            // 盈利极值
+            const profits = history.map(item => item.profit);
+            const maxProfit = Math.max(...profits);
+            const minProfit = Math.min(...profits);
+            
+            // 按投注类型统计
+            const typeStats = {};
+            history.forEach(item => {
+                if (!typeStats[item.type]) {
+                    typeStats[item.type] = {
+                        count: 0,
+                        successCount: 0,
+                        totalAmount: 0,
+                        totalProfit: 0
+                    };
+                }
+                typeStats[item.type].count++;
+                if (item.status === "success") typeStats[item.type].successCount++;
+                typeStats[item.type].totalAmount += item.amount;
+                typeStats[item.type].totalProfit += item.profit;
+            });
+            
+            // 格式化数据
+            const stats = {
+                totalCount,
+                successCount,
+                successRate: successRate.toFixed(1),
+                totalAmount: totalAmount.toFixed(2),
+                totalProfit: totalProfit.toFixed(2),
+                avgProfit: avgProfit.toFixed(2),
+                maxProfit: maxProfit.toFixed(2),
+                minProfit: minProfit.toFixed(2),
+                typeStats
+            };
+            
+            AIAnalytics.statCache = stats;
+            return stats;
+        }
+
+        // 6. 渲染AI战绩统计面板
+        function renderAIStats() {
+            const stats = calculateAIStats();
+            const statsPanel = document.getElementById("aiStatsPanel");
+            if (!statsPanel) return;
+            
+            // 统计卡片HTML
+            let statsHtml = `
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div class="stat-card border-l-4 border-primary">
+                        <h4 class="text-gray-500 text-sm mb-1">总投注次数</h4>
+                        <p class="text-2xl font-bold">${stats.totalCount}</p>
+                    </div>
+                    <div class="stat-card border-l-4 border-success">
+                        <h4 class="text-gray-500 text-sm mb-1">成功次数</h4>
+                        <p class="text-2xl font-bold">${stats.successCount} (${stats.successRate}%)</p>
+                    </div>
+                    <div class="stat-card border-l-4 border-warning">
+                        <h4 class="text-gray-500 text-sm mb-1">总投注金额</h4>
+                        <p class="text-2xl font-bold">${stats.totalAmount}</p>
+                    </div>
+                    <div class="stat-card border-l-4 ${stats.totalProfit >= 0 ? 'border-success' : 'border-danger'}">
+                        <h4 class="text-gray-500 text-sm mb-1">总盈利</h4>
+                        <p class="text-2xl font-bold ${stats.totalProfit >= 0 ? 'text-success' : 'text-danger'}">
+                            ${stats.totalProfit >= 0 ? '+' : ''}${stats.totalProfit}
+                        </p>
+                    </div>
+                </div>
+            `;
+            
+            // 详细统计表格
+            statsHtml += `
+                <div class="bg-white rounded-lg shadow p-4 mb-4">
+                    <h4 class="font-semibold mb-3">详细统计</h4>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <p class="text-gray-500 text-sm">平均每笔盈利</p>
+                            <p class="text-lg font-bold ${stats.avgProfit >= 0 ? 'text-success' : 'text-danger'}">
+                                ${stats.avgProfit >= 0 ? '+' : ''}${stats.avgProfit}
+                            </p>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 text-sm">最大单笔盈利</p>
+                            <p class="text-lg font-bold text-success">+${stats.maxProfit}</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 text-sm">最小单笔盈利</p>
+                            <p class="text-lg font-bold ${stats.minProfit >= 0 ? 'text-success' : 'text-danger'}">
+                                ${stats.minProfit >= 0 ? '+' : ''}${stats.minProfit}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // 按类型统计
+            if (Object.keys(stats.typeStats).length > 0) {
+                statsHtml += `
+                    <div class="bg-white rounded-lg shadow p-4">
+                        <h4 class="font-semibold mb-3">按投注类型统计</h4>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <tr class="bg-gray-50">
+                                    <th class="border p-3 text-left font-semibold">投注类型</th>
+                                    <th class="border p-3 text-left font-semibold">次数</th>
+                                    <th class="border p-3 text-left font-semibold">成功率</th>
+                                    <th class="border p-3 text-left font-semibold">总金额</th>
+                                    <th class="border p-3 text-left font-semibold">总盈利</th>
+                                </tr>
+                `;
+                
+                Object.entries(stats.typeStats).forEach(([type, typeStat]) => {
+                    const typeMap = {
+                        "higher_odds": "高赔率",
+                        "larger": "押大",
+                        "smaller": "押小",
+                        "follow": "跟随"
+                    };
+                    const typeText = typeMap[type] || type;
+                    const successRate = (typeStat.successCount / typeStat.count) * 100;
+                    
+                    statsHtml += `
+                        <tr class="table-hover-row transition-colors">
+                            <td class="border p-3">${typeText}</td>
+                            <td class="border p-3">${typeStat.count}</td>
+                            <td class="border p-3">${successRate.toFixed(1)}%</td>
+                            <td class="border p-3">${typeStat.totalAmount.toFixed(2)}</td>
+                            <td class="border p-3 ${typeStat.totalProfit >= 0 ? 'text-success' : 'text-danger'}">
+                                ${typeStat.totalProfit >= 0 ? '+' : ''}${typeStat.totalProfit.toFixed(2)}
                             </td>
                         </tr>
                     `;
+                });
+                
+                statsHtml += `
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            statsPanel.innerHTML = statsHtml;
+            
+            // 渲染盈利趋势图表
+            renderProfitTrendChart();
+        }
+
+        // 7. 渲染AI盈利趋势图表
+        function renderProfitTrendChart() {
+            const ctx = document.getElementById("profitTrendChart");
+            if (!ctx || AIAnalytics.betHistory.length < 2) {
+                if (ctx) ctx.parentElement.innerHTML = "<p class='text-center text-gray-500 py-4'>数据不足，无法生成趋势图（需至少2条记录）</p>";
+                return;
+            }
+            
+            // 准备图表数据（按时间排序）
+            const sortedHistory = [...AIAnalytics.betHistory].sort((a, b) => new Date(a.betTime) - new Date(b.betTime));
+            const labels = sortedHistory.map(item => item.betTime.split(' ')[1]); // 取时间部分（如14:30:00）
+            const profits = sortedHistory.map(item => item.profit);
+            const cumulativeProfits = [];
+            let sum = 0;
+            profits.forEach(p => {
+                sum += p;
+                cumulativeProfits.push(sum);
+            });
+            
+            // 销毁旧图表（避免重复渲染）
+            if (window.profitChart) {
+                window.profitChart.destroy();
+            }
+            
+            // 创建新图表
+            window.profitChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: '单笔盈利',
+                            data: profits,
+                            borderColor: '#165DFF',
+                            backgroundColor: 'rgba(22, 93, 255, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: '累计盈利',
+                            data: cumulativeProfits,
+                            borderColor: '#52C41A',
+                            backgroundColor: 'rgba(82, 196, 26, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) label += ': ';
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y >= 0 ? '+' : '';
+                                        label += context.parsed.y.toFixed(2);
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: {
+                                drawBorder: false
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value >= 0 ? '+' + value.toFixed(2) : value.toFixed(2);
+                                }
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    },
+                    animation: {
+                        duration: 1000,
+                        easing: 'easeOutQuart'
+                    }
+                }
+            });
+        }
+
+        // 8. 清空AI历史战绩
+        function clearAIHistory() {
+            if (confirm("确定要清空所有AI历史战绩吗？此操作不可恢复！")) {
+                AIAnalytics.betHistory = [];
+                AIAnalytics.statCache = {};
+                localStorage.removeItem('AIBetHistory');
+                renderAIHistoryTable();
+                renderAIStats();
+                Logger.info("AI历史战绩已清空", true);
+            }
+        }
+
+        // 字符串哈希函数
+        String.prototype.hashCode = function() {
+            let hash = 0;
+            for (let i = 0; i < this.length; i++) {
+                const char = this.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            return Math.abs(hash);
+        };
+
+        // 页面初始化
+        document.addEventListener("DOMContentLoaded", () => {
+            // 初始化参数输入框
+            document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
+            document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
+            document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
+            document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
+            document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
+            document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
+            document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
+            document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
+            document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
+            
+            // 初始化定时任务配置
+            document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
+            document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
+            document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
+            
+            // 初始化刷新间隔输入框
+            const hms = convertToHMS(CONFIG.state.refreshInterval);
+            document.getElementById("refreshHoursInput").value = hms.hours;
+            document.getElementById("refreshMinutesInput").value = hms.minutes;
+            document.getElementById("refreshSecondsInput").value = hms.seconds;
+            
+            // 初始化刷新倒计时显示（含毫秒）
+            const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
+            document.getElementById("refreshIntervalDisplay").textContent = 
+                `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
+            
+            // 初始化刷新周期开始时间
+            refreshCycleStartTime = Date.now();
+            
+            // 绑定AI历史战绩相关按钮事件
+            document.getElementById("clearAIHistoryBtn").addEventListener("click", clearAIHistory);
+            
+            // 投注策略切换事件
+            document.getElementById("betStrategySelect").addEventListener("change", function() {
+                CONFIG.state.betStrategy = this.value;
+                Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
+                if (isServiceRunning) {
+                    saveParameters();
+                }
+            });
+            
+            // 定时任务开关事件
+            document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
+                CONFIG.state.scheduleEnabled = this.checked;
+                if (this.checked) {
+                    setupSchedule();
+                } else {
+                    clearSchedule();
+                }
+            });
+            
+            // 绑定按钮事件
+            document.getElementById("startServiceBtn").addEventListener("click", startService);
+            document.getElementById("stopServiceBtn").addEventListener("click", stopService);
+            document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
+            document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
+            document.getElementById("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
+            document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
+            document.getElementById("manualRefreshBtn").addEventListener("click", manualRefresh);
+            document.getElementById("detailedLogModeCheckbox").addEventListener("change", function() {
+                CONFIG.state.detailedLogMode = this.checked;
+                Logger.toggleDetailedMode(this.checked);
+            });
+            document.getElementById("aiPredictionEnabledCheckbox").addEventListener("change", function() {
+                CONFIG.state.aiPredictionEnabled = this.checked;
+                Logger.info(`AI预测已${this.checked ? '开启' : '关闭'}`);
+                if (isServiceRunning && CONFIG.state.betStrategy !== "follow") {
+                    CONFIG.state.availableBets.forEach(bet => {
+                        analyzeWithAI(bet);
+                    });
+                }
+            });
+            document.getElementById("pendingFilterSelect").addEventListener("change", function() {
+                CONFIG.state.pendingFilter = this.value;
+                Logger.info(`待投注筛选方式已切换为: ${this.options[this.selectedIndex].text}`);
+                if (isServiceRunning) {
+                    processPendingBets(true);
+                }
+            });
+            document.getElementById("viewLogBtn").addEventListener("click", toggleLogModal);
+            document.getElementById("closeLogModal").addEventListener("click", toggleLogModal);
+            document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
+            document.getElementById("clearLogModalBtn").addEventListener("click", () => Logger.clear());
+            
+            // 初始化表格和服务状态
+            renderBetTable();
+            renderPendingBetsTable();
+            renderAIHistoryTable(); // 新增：初始化AI历史战绩表格
+            renderAIStats(); // 新增：初始化AI统计数据
+            updateServiceStatus();
+            
+            Logger.info("系统已启动，等待操作...");
+            
+            // 初始化页面可见性状态
+            isPageVisible = document.visibilityState === 'visible';
+            
+            // 启动5分钟自动检测机制（页面加载后默认启动）
+            startFiveMinCheckTimer();
+            
+            // 加载AI历史战绩
+            loadAIHistoryFromLocalStorage();
+        });
+    </script>
+</head>
+<body class="bg-gray-50 p-4 md:p-6">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold text-primary mb-2">M-Team 馒头菠菜</h1>
+            <p class="text-gray-500">智能投注管理平台（AI历史战绩版）</p>
+        </header>
+        
+        <!-- 服务控制区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-cogs text-primary mr-2"></i>服务控制
+                <span class="ml-3 text-sm font-normal text-gray-500">
+                    <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
+                    <span id="serviceStatusText">服务已停止</span>
+                </span>
+            </h2>
+            
+            <!-- 定时启动/停止设置 -->
+            <div class="mb-5 bg-gray-50 p-4 rounded-lg">
+                <div class="flex items-center gap-2 mb-3">
+                    <input type="checkbox" id="scheduleEnabledCheckbox" class="rounded text-primary focus:ring-primary">
+                    <label for="scheduleEnabledCheckbox" class="text-sm font-medium text-gray-700">启用定时启动/停止服务（保存参数生效）</label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="scheduleStartTimeInput" class="block text-sm text-gray-600 mb-1.5">定时启动时间</label>
+                        <input type="time" id="scheduleStartTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                    </div>
+                    <div>
+                        <label for="scheduleStopTimeInput" class="block text-sm text-gray-600 mb-1.5">定时停止时间</label>
+                        <input type="time" id="scheduleStopTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex flex-wrap gap-3">
+                <button id="startServiceBtn" class="bg-primary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-primary/90 transition-colors">
+                    <i class="fa fa-play mr-2"></i>验证并启动服务
+                </button>
+                <button id="stopServiceBtn" class="bg-danger text-white px-5 py-2.5 rounded-lg flex items-center opacity-50 cursor-not-allowed" disabled>
+                    <i class="fa fa-stop mr-2"></i>停止服务
+                </button>
+                <button id="viewLogBtn" class="bg-secondary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-secondary/90 transition-colors">
+                    <i class="fa fa-list-alt mr-2"></i>查看刷新日志
+                </button>
+                <button id="clearLogBtn" class="bg-warning text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-warning/90 transition-colors">
+                    <i class="fa fa-trash mr-2"></i>清理日志
+                </button>
+            </div>
+        </div>
+        
+        <!-- API配置区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-success">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-key text-success mr-2"></i>API 配置
+            </h2>
+            <div class="flex flex-wrap gap-3 items-center">
+                <input type="text" id="apiKeyInput" placeholder="输入API Key" class="flex-1 min-w-[300px] p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success focus:border-success outline-none transition-shadow">
+                <button id="verifyApiBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
+                    仅验证API Key
+                </button>
+            </div>
+        </div>
+        
+        <!-- 参数设置区域 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-warning">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-sliders text-warning mr-2"></i>参数设置
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">目标用户ID（跟随策略）</label>
+                    <input type="text" id="targetUserIdInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">提前下注秒数 <span class="text-danger text-xs">*</span></label>
+                    <input type="number" id="advanceSecondsInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">金额波动范围</label>
+                    <input type="number" id="amountRangeInput" min="0" value="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">基础金额</label>
+                    <input type="number" id="baseAmountInput" min="1" value="1000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">投注检查间隔（秒）</label>
+                    <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔（毫秒）</label>
+                    <input type="number" id="followCheckIntervalInput" min="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">投注策略</label>
+                    <select id="betStrategySelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <option value="higher_odds">最高赔率策略</option>
+                        <option value="larger">押大策略</option>
+                        <option value="smaller">押小策略</option>
+                        <option value="follow">跟随目标用户</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>
+                    <select id="pendingFilterSelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <option value="all">全部投注</option>
+                        <option value="highest_odds">最高赔率</option>
+                        <option value="highest_amount">最高金额</option>
+                        <option value="ratio_based">最佳比例</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="flex items-center gap-2 mt-4">
+                        <input type="checkbox" id="aiPredictionEnabledCheckbox" class="rounded text-purple focus:ring-purple">
+                        <span class="text-sm text-gray-700">启用AI深度分析预测（最高赔率策略生效）</span>
+                    </label>
+                    <label class="flex items-center gap-2 mt-2">
+                        <input type="checkbox" id="detailedLogModeCheckbox" class="rounded text-primary focus:ring-primary">
+                        <span class="text-sm text-gray-700">启用详细日志模式</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="border-t pt-4">
+                <h3 class="font-medium mb-3 text-gray-700">数据刷新间隔设置</h3>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <div class="flex items-center gap-2">
+                        <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <span class="text-gray-500">:</span>
+                        <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <span class="text-gray-500">:</span>
+                        <input type="number" id="refreshSecondsInput" min="5" max="59" placeholder="秒" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                    </div>
+                    <button id="setIntervalBtn" class="bg-warning text-white px-4 py-2.5 rounded-lg hover:bg-warning/90 transition-colors">
+                        设置刷新间隔
+                    </button>
+                    <div class="ml-auto flex items-center gap-3">
+                        <button id="autoRefreshBtn" class="bg-secondary/90 text-white px-4 py-2.5 rounded-lg hover:bg-secondary transition-colors">
+                            关闭自动刷新
+                        </button>
+                        <button id="manualRefreshBtn" class="bg-primary/90 text-white px-4 py-2.5 rounded-lg hover:bg-primary transition-colors">
+                            <i class="fa fa-refresh mr-1"></i>手动刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-2 text-sm text-gray-500">
+                    下次刷新倒计时: <span id="refreshIntervalDisplay" class="font-mono text-primary"></span>
+                </div>
+            </div>
+            
+            <div class="mt-5">
+                <button id="saveParamsBtn" class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors w-full md:w-auto">
+                    <i class="fa fa-save mr-2"></i>保存所有参数设置
+                </button>
+            </div>
+        </div>
+        
+        <!-- 可投注项目表格 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-list text-primary mr-2"></i>可投注项目
+                <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="availableBetsCount">0</span> 个项目</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table id="betItemsTable" class="min-w-full divide-y divide-gray-200">
+                    <!-- 表格内容由JavaScript动态生成 -->
+                </table>
+            </div>
+        </div>
+        
+        <!-- 待投注项目表格 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-calendar-check-o text-success mr-2"></i>待投注项目
+                <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="pendingBetsCount">0</span> 个项目</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table id="pendingBetsTable" class="min-w-full divide-y divide-gray-200">
+                    <!-- 表格内容由JavaScript动态生成 -->
+                </table>
+            </div>
+        </div>
+        
+        <!-- 新增：AI历史战绩模块 -->
+        <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-purple">
+            <h2 class="text-lg font-semibold mb-4 flex items-center">
+                <i class="fa fa-bar-chart text-purple mr-2"></i>AI历史战绩
+                <button id="clearAIHistoryBtn" class="ml-auto bg-danger/10 text-danger px-3 py-1.5 rounded-lg text-sm hover:bg-danger/20 transition-colors">
+                    <i class="fa fa-trash mr-1"></i>清空历史
+                </button>
+            </h2>
+            
+            <!-- AI战绩统计面板 -->
+            <div id="aiStatsPanel" class="mb-6">
+                <!-- 统计数据由JavaScript动态生成 -->
+            </div>
+            
+            <!-- 盈利趋势图表 -->
+            <div class="bg-gray-50 p-4 rounded-lg mb-6">
+                <h3 class="font-medium mb-3 text-gray-700">盈利趋势图</h3>
+                <div class="h-64">
+                    <canvas id="profitTrendChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- AI历史战绩表格 -->
+            <div class="overflow-x-auto">
+                <table id="aiHistoryTable" class="min-w-full divide-y divide-gray-200">
+                    <!-- 表格内容由JavaScript动态生成 -->
+                </table>
+            </div>
+        </div>
+        
+        <!-- 日志弹窗 -->
+        <div id="logModal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[80vh] flex flex-col">
+                <div class="p-4 border-b flex justify-between items-center">
+                    <h3 class="font-semibold text-lg">系统操作日志</h3>
+                    <div class="flex gap-2">
+                        <button id="clearLogModalBtn" class="text-sm text-gray-600 hover:text-danger transition-colors">
+                            <i class="fa fa-trash mr-1"></i>清空日志
+                        </button>
+                        <button id="closeLogModal" class="text-gray-500 hover:text-gray-700 transition-colors">
+                            <i class="fa fa-times text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 text-sm"></div>
+                <div class="p-4 border-t text-sm text-gray-500">
+                    提示：详细日志模式可在参数设置中开启
+                </div>
+            </div>
+        </div>
+        
+        <footer class="text-center text-gray-500 text-sm py-4">
+            <p>M-Team 智能菠菜管理平台 &copy; 2025</p>
+            <p class="mt-1">使用前请确保已阅读并理解相关风险提示</p>
+        </footer>
+    </div>
+
+    <script>
+        // 补充表格计数更新逻辑
+        function updateTableCounts() {
+            document.getElementById("availableBetsCount").textContent = CONFIG.state.availableBets.length;
+            document.getElementById("pendingBetsCount").textContent = pendingBets.length;
+        }
+
+        // 在现有渲染函数中添加计数更新
+        const originalRenderBetTable = renderBetTable;
+        renderBetTable = function() {
+            originalRenderBetTable();
+            updateTableCounts();
+        };
+
+        const originalRenderPendingBetsTable = renderPendingBetsTable;
+        renderPendingBetsTable = function() {
+            originalRenderPendingBetsTable();
+            updateTableCounts();
+        };
+
+        // 初始化计数显示
+        document.addEventListener("DOMContentLoaded", function() {
+            updateTableCounts();
+            // 确保AI历史战绩图表容器存在时初始化
+            if (document.getElementById("profitTrendChart")) {
+                // 初始无数据时显示提示
+                const ctx = document.getElementById("profitTrendChart");
+                if (AIAnalytics.betHistory.length < 2) {
+                    ctx.parentElement.innerHTML = "<p class='text-center text-gray-500 py-16'>数据不足，无法生成趋势图（需至少2条AI关联投注记录）</p>";
+                }
+            }
+        });
+
+        // 修复跟随投注函数参数问题（原代码中timerId参数遗漏）
+        window.placeFollowBet = async function(followBet, optionId) {
+            // 兼容原调用逻辑，移除多余的timerId参数
+            updateLastActivity();
+            try {
+                Logger.info(`开始跟随投注项目 #${followBet.id}，选项: ${followBet.highestOddsTeam}, 金额: ${followBet.betAmount}`);
+                
+                const option = followBet.optionsList.find(opt => opt.id === optionId);
+                if (!option) {
+                    Logger.error(`跟随投注失败: 选项 ${optionId} 不存在`);
+                    return false;
+                }
+                
+                const url = `${CONFIG.mainHost}/${CONFIG.apis.betgameOdds
+                    .replace('{optId}', optionId)
+                    .replace('{bonus}', followBet.betAmount)}`;
+                
+                const result = await request(url);
+                
+                if (result.code !== 0) {
+                    Logger.error(`跟随投注失败: ${result.msg || '未知错误'}`);
+                    // 记录失败历史
+                    recordAIHistory({
+                        betId: followBet.id,
+                        type: "follow",
+                        status: "failed",
+                        betTime: new Date().toLocaleString(),
+                        team: followBet.highestOddsTeam,
+                        odds: followBet.highestOdds,
+                        amount: followBet.betAmount,
+                        aiPrediction: "跟随目标用户",
+                        confidence: 0,
+                        profit: 0
+                    });
+                    return false;
+                }
+                
+                Logger.info(`跟随投注成功: 项目 #${followBet.id}，选项 ${followBet.highestOddsTeam}，金额 ${followBet.betAmount}`);
+                
+                if (!GlobalInfo.bet_mask[followBet.id]) {
+                    GlobalInfo.bet_mask[followBet.id] = [];
+                }
+                GlobalInfo.bet_mask[followBet.id].push(optionId);
+                
+                // 记录成功历史
+                const profit = (followBet.highestOdds * followBet.betAmount) - followBet.betAmount;
+                recordAIHistory({
+                    betId: followBet.id,
+                    type: "follow",
+                    status: "success",
+                    betTime: new Date().toLocaleString(),
+                    team: followBet.highestOddsTeam,
+                    odds: followBet.highestOdds,
+                    amount: followBet.betAmount,
+                    aiPrediction: "跟随目标用户",
+                    confidence: 0,
+                    profit: profit
+                });
+                
+                return true;
+            } catch (e) {
+                Logger.warning("主服务器跟随投注失败，尝试备用服务器...");
+                try {
+                    const url = `${CONFIG.testHost}/${CONFIG.apis.betgameOdds
+                        .replace('{optId}', optionId)
+                        .replace('{bonus}', followBet.betAmount)}`;
+                    
+                    const result = await request(url);
+                    
+                    if (result.code !== 0) {
+                        Logger.error(`备用服务器跟随投注失败: ${result.msg || '未知错误'}`);
+                        // 记录失败历史
+                        recordAIHistory({
+                            betId: followBet.id,
+                            type: "follow",
+                            status: "failed",
+                            betTime: new Date().toLocaleString(),
+                            team: followBet.highestOddsTeam,
+                            odds: followBet.highestOdds,
+                            amount: followBet.betAmount,
+                            aiPrediction: "跟随目标用户",
+                            confidence: 0,
+                            profit: 0
+                        });
+                        return false;
+                    }
+                    
+                    Logger.info(`备用服务器跟随投注成功: 项目 #${followBet.id}`);
+                    
+                    if (!GlobalInfo.bet_mask[followBet.id]) {
+                        GlobalInfo.bet_mask[followBet.id] = [];
+                    }
+                    GlobalInfo.bet_mask[followBet.id].push(optionId);
+                    
+                    // 记录成功历史
+                    const profit = (followBet.highestOdds * followBet.betAmount) - followBet.betAmount;
+                    recordAIHistory({
+                        betId: followBet.id,
+                        type: "follow",
+                        status: "success",
+                        betTime: new Date().toLocaleString(),
+                        team: followBet.highestOddsTeam,
+                        odds: followBet.highestOdds,
+                        amount: followBet.betAmount,
+                        aiPrediction: "跟随目标用户",
+                        confidence: 0,
+                        profit: profit
+                    });
+                    
+                    return true;
+                } catch (e2) {
+                    Logger.error(`跟随投注请求失败: ${e2.message}`);
+                    // 记录失败历史
+                    recordAIHistory({
+                        betId: followBet.id,
+                        type: "follow",
+                        status: "failed",
+                        betTime: new Date().toLocaleString(),
+                        team: followBet.highestOddsTeam,
+                        odds: followBet.highestOdds,
+                        amount: followBet.betAmount,
+                        aiPrediction: "跟随目标用户",
+                        confidence: 0,
+                        profit: 0
+                    });
+                    return false;
+                }
+            }
+        };
+
+        // 修复启动跟随检查函数中的参数传递问题
+        window.startFollowingCheck = function(gameId) {
+            if (followCheckTimers[gameId]) {
+                clearInterval(followCheckTimers[gameId]);
+            }
+            
+            if (GlobalInfo.followedBets[gameId]) {
+                return;
+            }
+            
+            const checkInterval = CONFIG.state.followCheckInterval;
+            Logger.info(`开始实时监控项目 #${gameId} 的目标用户投注 (检查间隔: ${checkInterval}ms)`, true);
+            
+            followCheckTimers[gameId] = setInterval(async () => {
+                if (!isServiceRunning) {
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
                     return;
                 }
                 
-                let html = `
-                    <tr class="bg-gray-50">
-                        <th class="border p-3 text-left font-semibold">ID</th>
-                        <th class="border p-3 text-left font-semibold">描述</th>
-                        <th class="border p-3 text-left font-semibold">投注对象 (赔率)</th>
-                        <th class="border p-3 text-left font-semibold">AI预测</th>
-                        <th class="border p-3 text-left font-semibold">下注时间</th>
-                        <th class="border p-3 text-left font-semibold">金额</th>
-                        <th class="border p-3 text-left font-semibold">赔率×金额</th>
-                        <th class="border p-3 text-left font-semibold">状态</th>
-                    </tr>
-                `;
-                
-                pendingBets.forEach(bet => {
-                    let statusClass = "text-primary";
-                    let statusBadge = "等待中";
-                    
-                    if (bet.status === "处理中") {
-                        statusClass = "text-warning";
-                        statusBadge = `<span class="flex items-center"><i class="fa fa-spinner fa-spin mr-1"></i> 处理中</span>`;
-                    }
-                    if (bet.status === "已完成") {
-                        statusClass = "text-success";
-                        statusBadge = `<span class="flex items-center"><i class="fa fa-check-circle mr-1"></i> 已完成</span>`;
-                    }
-                    if (bet.status === "失败") {
-                        statusClass = "text-danger";
-                        statusBadge = `<span class="flex items-center"><i class="fa fa-times-circle mr-1"></i> 失败</span>`;
-                    }
-                    
-                    // 跟随模式标记
-                    const strategyBadge = bet.strategy === "follow" 
-                        ? `<span class="ml-2 text-xs bg-purple/10 text-purple px-1.5 rounded">跟随</span>` 
-                        : "";
-                    
-                    const betTimeHtml = `<span class="cursor-pointer underline hover:text-primary/80 transition-colors" onclick="editPendingBetTime('${bet.id}')">${bet.betTime.toLocaleString()}</span>`;
-                    
-                    // AI预测显示
-                    const aiPredictionHtml = bet.aiPrediction 
-                        ? `<div class="text-sm text-purple">${bet.aiPrediction}</div>`
-                        : "-";
-                    
-                    html += `<tr class="table-hover-row transition-colors">
-                        <td class="border p-3">${bet.id}</td>
-                        <td class="border p-3">${bet.heading || '无描述'}</td>
-                        <td class="border p-3 font-bold text-success">${bet.highestOddsTeam} (${bet.highestOdds})${strategyBadge}</td>
-                        <td class="border p-3">${aiPredictionHtml}</td>
-                        <td class="border p-3 text-primary" onclick="event.stopPropagation()">${betTimeHtml}</td>
-                        <td class="border p-3">${bet.betAmount}</td>
-                        <td class="border p-3">${bet.ratioValue ? bet.ratioValue.toFixed(2) : 'N/A'}</td>
-                        <td class="border p-3 ${statusClass}">${statusBadge}</td>
-                    </tr>`;
-                });
-                
-                table.innerHTML = html;
-            }
-
-            // 字符串哈希函数
-            String.prototype.hashCode = function() {
-                let hash = 0;
-                for (let i = 0; i < this.length; i++) {
-                    const char = this.charCodeAt(i);
-                    hash = ((hash << 5) - hash) + char;
-                    hash = hash & hash;
+                const betItem = CONFIG.state.availableBets.find(item => item.id === gameId);
+                if (!betItem) {
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                    Logger.info(`项目 #${gameId} 已失效，停止监控`, true);
+                    return;
                 }
-                return Math.abs(hash);
-            };
-
-            // 页面初始化
-            document.addEventListener("DOMContentLoaded", () => {
-                // 初始化参数输入框
-                document.getElementById("targetUserIdInput").value = CONFIG.state.targetUserId;
-                document.getElementById("advanceSecondsInput").value = CONFIG.state.advanceSeconds;
-                document.getElementById("amountRangeInput").value = CONFIG.state.amountRange;
-                document.getElementById("baseAmountInput").value = CONFIG.state.baseAmount;
-                document.getElementById("betStrategySelect").value = CONFIG.state.betStrategy;
-                document.getElementById("checkIntervalInput").value = CONFIG.state.checkInterval;
-                document.getElementById("pendingFilterSelect").value = CONFIG.state.pendingFilter;
-                document.getElementById("followCheckIntervalInput").value = CONFIG.state.followCheckInterval;
-                document.getElementById("aiPredictionEnabledCheckbox").checked = CONFIG.state.aiPredictionEnabled;
                 
-                // 初始化定时任务配置
-                document.getElementById("scheduleEnabledCheckbox").checked = CONFIG.state.scheduleEnabled;
-                document.getElementById("scheduleStartTimeInput").value = CONFIG.state.scheduleStartTime;
-                document.getElementById("scheduleStopTimeInput").value = CONFIG.state.scheduleStopTime;
+                const endTime = new Date(betItem.endtime);
+                const now = new Date();
+                if (now > endTime) {
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                    Logger.info(`项目 #${gameId} 已过投注时间，停止监控`, true);
+                    return;
+                }
                 
-                // 初始化刷新间隔输入框
-                const hms = convertToHMS(CONFIG.state.refreshInterval);
-                document.getElementById("refreshHoursInput").value = hms.hours;
-                document.getElementById("refreshMinutesInput").value = hms.minutes;
-                document.getElementById("refreshSecondsInput").value = hms.seconds;
-                
-                // 初始化刷新倒计时显示（含毫秒）
-                const hmsms = convertMsToHMSMs(CONFIG.state.refreshInterval * 1000);
-                document.getElementById("refreshIntervalDisplay").textContent = 
-                    `${hmsms.hours.toString().padStart(2, '0')}:${hmsms.minutes.toString().padStart(2, '0')}:${hmsms.seconds.toString().padStart(2, '0')}.${hmsms.milliseconds.toString().padStart(3, '0')}`;
-                
-                // 初始化刷新周期开始时间
-                refreshCycleStartTime = Date.now();
-                
-                // 投注策略切换事件
-                document.getElementById("betStrategySelect").addEventListener("change", function() {
-                    CONFIG.state.betStrategy = this.value;
-                    Logger.info(`投注策略已切换为: ${this.options[this.selectedIndex].text}`);
-                    if (isServiceRunning) {
-                        saveParameters();
+                const targetBet = await getTargetUserBet(gameId);
+                if (targetBet) {
+                    const option = betItem.optionsList.find(opt => opt.id === targetBet.optionid);
+                    if (!option) {
+                        Logger.error(`跟随投注失败: 选项 ${targetBet.optionid} 不存在`);
+                        clearInterval(followCheckTimers[gameId]);
+                        delete followCheckTimers[gameId];
+                        return;
                     }
-                });
-                
-                // 定时任务开关事件
-                document.getElementById("scheduleEnabledCheckbox").addEventListener("change", function() {
-                    CONFIG.state.scheduleEnabled = this.checked;
-                    if (this.checked) {
-                        setupSchedule();
-                    } else {
-                        clearSchedule();
+                    
+                    Logger.info(`检测到目标用户 ${CONFIG.state.targetUserId} 已投注项目 #${gameId} - ${option.text}，准备立即跟随`, true);
+                    
+                    const followBet = {
+                        ...betItem,
+                        id: gameId,
+                        betTime: now,
+                        betAmount: calculateFollowAmount(targetBet.bonus),
+                        strategy: "follow",
+                        status: "处理中",
+                        highestOddsTeam: option.text,
+                        highestOdds: parseFloat(option.odds || 0),
+                        ratioValue: 0,
+                        recordedOdds: 0
+                    };
+                    
+                    pendingBets.unshift(followBet);
+                    renderPendingBetsTable();
+                    
+                    // 修复参数传递：移除多余的timerId参数
+                    const success = await placeFollowBet(followBet, targetBet.optionid);
+                    
+                    const index = pendingBets.findIndex(b => b.id === gameId && b.status === "处理中");
+                    if (index !== -1) {
+                        pendingBets[index].status = success ? "已完成" : "失败";
+                        renderPendingBetsTable();
                     }
-                });
-                
-                // 绑定按钮事件
-                document.getElementById("startServiceBtn").addEventListener("click", startService);
-                document.getElementById("stopServiceBtn").addEventListener("click", stopService);
-                document.getElementById("verifyApiBtn").addEventListener("click", verifyApiKey);
-                document.getElementById("saveParamsBtn").addEventListener("click", saveParameters);
-                document.getElementById("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
-                document.getElementById("setIntervalBtn").addEventListener("click", setRefreshInterval);
-                document.getElementById("manualRefreshBtn").addEventListener("click", manualRefresh);
-                document.getElementById("detailedLogModeCheckbox").addEventListener("change", function() {
-                    CONFIG.state.detailedLogMode = this.checked;
-                    Logger.toggleDetailedMode(this.checked);
-                });
-                document.getElementById("aiPredictionEnabledCheckbox").addEventListener("change", function() {
-                    CONFIG.state.aiPredictionEnabled = this.checked;
-                    Logger.info(`AI预测已${this.checked ? '开启' : '关闭'}`);
-                    if (isServiceRunning && CONFIG.state.betStrategy !== "follow") {
-                        CONFIG.state.availableBets.forEach(bet => {
-                            analyzeWithAI(bet);
-                        });
+                    
+                    if (success) {
+                        GlobalInfo.followedBets[gameId] = {
+                            optionId: targetBet.optionid,
+                            amount: followBet.betAmount
+                        };
+                        AudioPlayer.playBetSuccess();
+                        Logger.info(`跟随投注成功，3秒后自动刷新可投注项目...`);
+                        setTimeout(() => loadBetItems(), 3000);
                     }
-                });
-                document.getElementById("pendingFilterSelect").addEventListener("change", function() {
-                    CONFIG.state.pendingFilter = this.value;
-                    Logger.info(`待投注筛选方式已切换为: ${this.options[this.selectedIndex].text}`);
-                    if (isServiceRunning) {
-                        processPendingBets(true);
-                    }
-                });
-                document.getElementById("viewLogBtn").addEventListener("click", toggleLogModal);
-                document.getElementById("closeLogModal").addEventListener("click", toggleLogModal);
-                document.getElementById("clearLogBtn").addEventListener("click", () => Logger.clear());
-                document.getElementById("clearLogModalBtn").addEventListener("click", () => Logger.clear());
-                
-                // 初始化表格和服务状态
-                renderBetTable();
-                renderPendingBetsTable();
-                updateServiceStatus();
-                
-                Logger.info("系统已启动，等待操作...");
-                
-                // 初始化页面可见性状态
-                isPageVisible = document.visibilityState === 'visible';
-                
-                // 启动5分钟自动检测机制（页面加载后默认启动）
-                startFiveMinCheckTimer();
-            });
-        </script>
-    </head>
-    <body class="bg-gray-50 p-4 md:p-6">
-        <div class="max-w-7xl mx-auto">
-            <header class="mb-8">
-                <h1 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold text-primary mb-2">M-Team 馒头菠菜</h1>
-                <p class="text-gray-500">智能投注管理平台</p>
-            </header>
-            
-            <!-- 服务控制区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-cogs text-primary mr-2"></i>服务控制
-                    <span class="ml-3 text-sm font-normal text-gray-500">
-                        <span id="serviceStatusIndicator" class="inline-block w-3 h-3 rounded-full bg-gray-400 mr-2"></span>
-                        <span id="serviceStatusText">服务已停止</span>
-                    </span>
-                </h2>
-                
-                <!-- 定时启动/停止设置 -->
-                <div class="mb-5 bg-gray-50 p-4 rounded-lg">
-                    <div class="flex items-center gap-2 mb-3">
-                        <input type="checkbox" id="scheduleEnabledCheckbox" class="rounded text-primary focus:ring-primary">
-                        <label for="scheduleEnabledCheckbox" class="text-sm font-medium text-gray-700">启用定时启动/停止服务（保存参数生效）</label>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label for="scheduleStartTimeInput" class="block text-sm text-gray-600 mb-1.5">定时启动时间</label>
-                            <input type="time" id="scheduleStartTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
-                        </div>
-                        <div>
-                            <label for="scheduleStopTimeInput" class="block text-sm text-gray-600 mb-1.5">定时停止时间</label>
-                            <input type="time" id="scheduleStopTimeInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="flex flex-wrap gap-3">
-                    <button id="startServiceBtn" class="bg-primary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-primary/90 transition-colors">
-                        <i class="fa fa-play mr-2"></i>验证并启动服务
-                    </button>
-                    <button id="stopServiceBtn" class="bg-danger text-white px-5 py-2.5 rounded-lg flex items-center opacity-50 cursor-not-allowed" disabled>
-                        <i class="fa fa-stop mr-2"></i>停止服务
-                    </button>
-                    <button id="viewLogBtn" class="bg-secondary text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-secondary/90 transition-colors">
-                        <i class="fa fa-list-alt mr-2"></i>查看刷新日志
-                    </button>
-                    <button id="clearLogBtn" class="bg-warning text-white px-5 py-2.5 rounded-lg flex items-center hover:bg-warning/90 transition-colors">
-                        <i class="fa fa-trash mr-2"></i>清理日志
-                    </button>
-                </div>
-            </div>
-            
-            <!-- API配置区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-success">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-key text-success mr-2"></i>API 配置
-                </h2>
-                <div class="flex flex-wrap gap-3 items-center">
-                    <input type="text" id="apiKeyInput" placeholder="输入API Key" class="flex-1 min-w-[300px] p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-success focus:border-success outline-none transition-shadow">
-                    <button id="verifyApiBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
-                        仅验证API Key
-                    </button>
-                </div>
-            </div>
-            
-            <!-- 参数设置区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-warning">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-sliders text-warning mr-2"></i>参数设置
-                </h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">目标用户ID（跟随策略）</label>
-                        <input type="text" id="targetUserIdInput" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">提前下注秒数 <span class="text-danger text-xs">*</span></label>
-                        <input type="number" id="advanceSecondsInput" min="0" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">金额波动范围</label>
-                        <input type="number" id="amountRangeInput" min="0" value="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">基础金额</label>
-                        <input type="number" id="baseAmountInput" min="1" value="1000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2
-						                        focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">投注检查间隔（秒）</label>
-                        <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔（毫秒）</label>
-                        <input type="number" id="followCheckIntervalInput" min="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">投注策略</label>
-                        <select id="betStrategySelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <option value="higher_odds">最高赔率策略</option>
-                            <option value="larger">押大策略</option>
-                            <option value="smaller">押小策略</option>
-                            <option value="follow">跟随目标用户</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>
-                        <select id="pendingFilterSelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <option value="all">全部投注</option>
-                            <option value="highest_odds">最高赔率</option>
-                            <option value="highest_amount">最高金额</option>
-                            <option value="ratio_based">最佳比例</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="flex items-center gap-2 mt-4">
-                            <input type="checkbox" id="aiPredictionEnabledCheckbox" class="rounded text-purple focus:ring-purple">
-                            <span class="text-sm text-gray-700">启用AI深度分析预测（最高赔率策略生效）</span>
-                        </label>
-                        <label class="flex items-center gap-2 mt-2">
-                            <input type="checkbox" id="detailedLogModeCheckbox" class="rounded text-primary focus:ring-primary">
-                            <span class="text-sm text-gray-700">启用详细日志模式</span>
-                        </label>
-                    </div>
-                </div>
-                
-                <div class="border-t pt-4">
-                    <h3 class="font-medium mb-3 text-gray-700">数据刷新间隔设置</h3>
-                    <div class="flex flex-wrap gap-3 items-center">
-                        <div class="flex items-center gap-2">
-                            <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <span class="text-gray-500">:</span>
-                            <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <span class="text-gray-500">:</span>
-                            <input type="number" id="refreshSecondsInput" min="5" max="59" placeholder="秒" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                        </div>
-                        <button id="setIntervalBtn" class="bg-warning text-white px-4 py-2.5 rounded-lg hover:bg-warning/90 transition-colors">
-                            设置刷新间隔
-                        </button>
-                        <div class="ml-auto flex items-center gap-3">
-                            <button id="autoRefreshBtn" class="bg-secondary/90 text-white px-4 py-2.5 rounded-lg hover:bg-secondary transition-colors">
-                                关闭自动刷新
-                            </button>
-                            <button id="manualRefreshBtn" class="bg-primary/90 text-white px-4 py-2.5 rounded-lg hover:bg-primary transition-colors">
-                                <i class="fa fa-refresh mr-1"></i>手动刷新
-                            </button>
-                        </div>
-                    </div>
-                    <div class="mt-2 text-sm text-gray-500">
-                        下次刷新倒计时: <span id="refreshIntervalDisplay" class="font-mono text-primary"></span>
-                    </div>
-                </div>
-                
-                <div class="mt-5">
-                    <button id="saveParamsBtn" class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors w-full md:w-auto">
-                        <i class="fa fa-save mr-2"></i>保存所有参数设置
-                    </button>
-                </div>
-            </div>
-            
-            <!-- 可投注项目表格 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-list text-primary mr-2"></i>可投注项目
-                    <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="availableBetsCount">0</span> 个项目</span>
-                </h2>
-                <div class="overflow-x-auto">
-                    <table id="betItemsTable" class="min-w-full divide-y divide-gray-200">
-                        <!-- 表格内容由JavaScript动态生成 -->
-                    </table>
-                </div>
-            </div>
-            
-            <!-- 待投注项目表格 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-calendar-check-o text-success mr-2"></i>待投注项目
-                    <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="pendingBetsCount">0</span> 个项目</span>
-                </h2>
-                <div class="overflow-x-auto">
-                    <table id="pendingBetsTable" class="min-w-full divide-y divide-gray-200">
-                        <!-- 表格内容由JavaScript动态生成 -->
-                    </table>
-                </div>
-            </div>
-            
-            <!-- 日志弹窗 -->
-            <div id="logModal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4">
-                <div class="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[80vh] flex flex-col">
-                    <div class="p-4 border-b flex justify-between items-center">
-                        <h3 class="font-semibold text-lg">系统操作日志</h3>
-                        <div class="flex gap-2">
-                            <button id="clearLogModalBtn" class="text-sm text-gray-600 hover:text-danger transition-colors">
-                                <i class="fa fa-trash mr-1"></i>清空日志
-                            </button>
-                            <button id="closeLogModal" class="text-gray-500 hover:text-gray-700 transition-colors">
-                                <i class="fa fa-times text-xl"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 text-sm"></div>
-                    <div class="p-4 border-t text-sm text-gray-500">
-                        提示：详细日志模式可在参数设置中开启
-                    </div>
-                </div>
-            </div>
-            
-            <footer class="text-center text-gray-500 text-sm py-4">
-                <p>M-Team 智能投注管理平台 &copy; 2023</p>
-                <p class="mt-1">使用前请确保已阅读并理解相关风险提示</p>
-            </footer>
-        </div>
-
-        <script>
-            // 补充表格计数更新逻辑
-            function updateTableCounts() {
-                document.getElementById("availableBetsCount").textContent = CONFIG.state.availableBets.length;
-                document.getElementById("pendingBetsCount").textContent = pendingBets.length;
-            }
-
-            // 在现有渲染函数中添加计数更新
-            const originalRenderBetTable = renderBetTable;
-            renderBetTable = function() {
-                originalRenderBetTable();
-                updateTableCounts();
-            };
-
-            const originalRenderPendingBetsTable = renderPendingBetsTable;
-            renderPendingBetsTable = function() {
-                originalRenderPendingBetsTable();
-                updateTableCounts();
-            };
-
-            // 初始化计数显示
-            document.addEventListener("DOMContentLoaded", function() {
-                updateTableCounts();
-            });
-        </script>
-    </body>
+                    
+                    clearInterval(followCheckTimers[gameId]);
+                    delete followCheckTimers[gameId];
+                }
+            }, checkInterval);
+        };
+    </script>
+</body>
 </html>
+				

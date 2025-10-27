@@ -137,10 +137,12 @@
         const BET_WARN_TIME = 10 * 60 * 1000; // 待投注项目预警时间（10分钟内）
         let isBettingInProgress = false; // 标记是否有投注流程在进行中
         
-        // AI分析相关数据存储
+        // AI分析相关数据存储（增强版）
         const AIAnalytics = {
-            historicalData: {}, // 存储历史数据 {teamId: {wins, losses, total, recentScores: []}}
-            predictionCache: {} // 缓存预测结果 {gameId: {prediction, confidence}}
+            historicalData: {}, // 存储历史数据 {teamId: {多维度数据}}
+            predictionCache: {}, // 缓存预测结果 {gameId: {prediction, confidence, analysis}}
+            matchHistoryCache: {}, // 队伍间对战历史缓存
+            lastUpdateTime: {} // 数据更新时间戳（确保时效性）
         };
         
         const GlobalInfo = {
@@ -785,88 +787,262 @@
             }
         }
 
-        // AI分析模块
-        async function analyzeWithAI(betItem) {
-            try {
-                Logger.info(`开始AI分析项目 #${betItem.id}...`, true);
-                
-                const teams = betItem.optionsList.map(opt => opt.text.trim());
-                const teamDataPromises = teams.map(team => fetchTeamHistory(team));
-                const teamDataArray = await Promise.all(teamDataPromises);
-                
-                const prediction = predictWinner(teamDataArray, teams, betItem);
-                AIAnalytics.predictionCache[betItem.id] = prediction;
-                
-                Logger.info(`AI分析完成项目 #${betItem.id}: 预测 ${prediction.prediction} (可信度: ${(prediction.confidence * 100).toFixed(1)}%)`, true);
-                renderBetTable();
-                return prediction;
-            } catch (e) {
-                Logger.warning(`项目 #${betItem.id} 的AI分析失败: ${e.message}`, true);
-                return null;
-            }
-        }
-
-        // 获取队伍历史数据
+        // 获取队伍历史数据（增强版）
         async function fetchTeamHistory(teamName) {
             const teamId = teamName.hashCode();
+            const now = Date.now();
+            const CACHE_EXPIRE = 30 * 60 * 1000; // 缓存30分钟过期（新增时效性控制）
             
-            if (AIAnalytics.historicalData[teamId]) {
+            // 新增：缓存未过期直接返回
+            if (AIAnalytics.historicalData[teamId] && (now - AIAnalytics.lastUpdateTime[teamId] < CACHE_EXPIRE)) {
+                Logger.info(`使用缓存的队伍 ${teamName} 历史数据（缓存未过期）`, true);
                 return AIAnalytics.historicalData[teamId];
             }
             
             try {
+                // 模拟真实接口返回（原逻辑保留，新增数据维度）
                 const mockData = {
                     teamName,
-                    wins: Math.floor(Math.random() * 30) + 10,
-                    losses: Math.floor(Math.random() * 20) + 5,
-                    recentScores: Array.from({length: 5}, () => ({
-                        score: Math.floor(Math.random() * 20) + 50,
-                        opponentScore: Math.floor(Math.random() * 20) + 50
+                    // 基础数据保留并优化
+                    wins: Math.floor(Math.random() * 40) + 20, // 扩大数据范围，更真实
+                    losses: Math.floor(Math.random() * 25) + 8,
+                    // 新增核心维度
+                    homeWins: Math.floor(Math.random() * 20) + 10, // 主场胜场
+                    homeTotal: Math.floor(Math.random() * 10) + 20, // 主场总场次
+                    recentStreak: Math.floor(Math.random() * 8) - 4, // 连胜(正)/连败(负)
+                    keyPlayerStatus: Math.random() > 0.2 ? "normal" : (Math.random() > 0.5 ? "injured" : "suspended"), // 关键球员状态
+                    attackAvg: Math.floor(Math.random() * 3) + 1.2, // 场均进攻效率
+                    defenseAvg: Math.floor(Math.random() * 3) + 0.8, // 场均防守效率
+                    // 近期比分保留，新增比分稳定性计算
+                    recentScores: Array.from({length: 8}, () => ({ // 近期场次从5场扩至8场
+                        score: Math.floor(Math.random() * 30) + 55,
+                        opponentScore: Math.floor(Math.random() * 30) + 50,
+                        isHome: Math.random() > 0.5 // 新增：是否主场
                     }))
                 };
                 
-                mockData.winRate = mockData.wins / (mockData.wins + mockData.losses);
-                mockData.avgScoreDiff = mockData.recentScores.reduce((sum, game) => 
-                    sum + (game.score - game.opponentScore), 0) / mockData.recentScores.length;
+                // 新增：衍生关键指标计算
+                mockData.winRate = (mockData.wins / (mockData.wins + mockData.losses)).toFixed(3); // 胜率（保留3位小数）
+                mockData.homeWinRate = mockData.homeTotal > 0 ? (mockData.homeWins / mockData.homeTotal).toFixed(3) : 0.5; // 主场胜率
+                // 新增：近期状态趋势（近3场胜率，权重更高）
+                const recent3Games = mockData.recentScores.slice(0, 3);
+                mockData.recent3WinRate = recent3Games.length > 0 
+                    ? (recent3Games.filter(g => g.score > g.opponentScore).length / recent3Games.length).toFixed(3) 
+                    : 0.5;
+                // 新增：比分稳定性（标准差越小越稳定）
+                const scoreDiffs = mockData.recentScores.map(g => g.score - g.opponentScore);
+                const avgDiff = scoreDiffs.reduce((sum, diff) => sum + diff, 0) / scoreDiffs.length;
+                mockData.scoreStability = Math.sqrt(scoreDiffs.reduce((sum, diff) => sum + Math.pow(diff - avgDiff, 2), 0) / scoreDiffs.length).toFixed(2);
                 
+                // 缓存数据并记录更新时间
                 AIAnalytics.historicalData[teamId] = mockData;
+                AIAnalytics.lastUpdateTime[teamId] = now;
+                Logger.info(`获取队伍 ${teamName} 历史数据（含对战趋势/主场胜率等维度）`, true);
                 return mockData;
             } catch (e) {
-                Logger.warning(`获取队伍 ${teamName} 历史数据失败: ${e.message}`, true);
-                return null;
+                Logger.warning(`获取队伍 ${teamName} 历史数据失败，使用降级数据`, true);
+                // 新增：降级策略（缓存失效时返回基础数据，避免预测中断）
+                const fallbackData = {
+                    teamName,
+                    wins: Math.floor(Math.random() * 30) + 10,
+                    losses: Math.floor(Math.random() * 20) + 5,
+                    winRate: 0.5,
+                    homeWinRate: 0.5,
+                    recent3WinRate: 0.5,
+                    recentScores: Array.from({length: 5}, () => ({score: 60, opponentScore: 55}))
+                };
+                AIAnalytics.historicalData[teamId] = fallbackData;
+                return fallbackData;
             }
         }
 
-        // 预测获胜者
-        function predictWinner(teamDataArray, teamNames, betItem) {
+        // 新增：获取队伍间对战历史（关键补充维度）
+        async function fetchMatchHistory(teamA, teamB) {
+            const matchKey = `${teamA}-${teamB}`;
+            const reverseKey = `${teamB}-${teamA}`;
+            const now = Date.now();
+            const CACHE_EXPIRE = 24 * 60 * 60 * 1000; // 对战历史缓存24小时
+            
+            // 双向缓存匹配（A对B与B对A通用）
+            if (AIAnalytics.matchHistoryCache[matchKey] && (now - AIAnalytics.matchHistoryCache[matchKey].updateTime < CACHE_EXPIRE)) {
+                return AIAnalytics.matchHistoryCache[matchKey].data;
+            }
+            if (AIAnalytics.matchHistoryCache[reverseKey] && (now - AIAnalytics.matchHistoryCache[reverseKey].updateTime < CACHE_EXPIRE)) {
+                return AIAnalytics.matchHistoryCache[reverseKey].data;
+            }
+            
+            try {
+                // 模拟对战历史数据（含胜负、比分、主客场）
+                const matchCount = Math.floor(Math.random() * 5) + 2; // 历史对战2-6场
+                const matchHistory = Array.from({length: matchCount}, (_, i) => {
+                    const teamAScore = Math.floor(Math.random() * 25) + 55;
+                    const teamBScore = Math.floor(Math.random() * 25) + 50;
+                    return {
+                        matchNo: `202${3 - i}-${Math.floor(Math.random() * 12) + 1}`, // 模拟比赛时间
+                        homeTeam: i % 2 === 0 ? teamA : teamB, // 交替主客场
+                        awayTeam: i % 2 === 0 ? teamB : teamA,
+                        homeScore: i % 2 === 0 ? teamAScore : teamBScore,
+                        awayScore: i % 2 === 0 ? teamBScore : teamAScore,
+                        winner: teamAScore > teamBScore ? teamA : teamB
+                    };
+                });
+                
+                // 计算对战关键指标
+                const teamAWinCount = matchHistory.filter(m => m.winner === teamA).length;
+                const teamBWinCount = matchHistory.filter(m => m.winner === teamB).length;
+                const headToHeadData = {
+                    matchHistory,
+                    totalMatches: matchCount,
+                    teamAWinRate: (teamAWinCount / matchCount).toFixed(3),
+                    teamBWinRate: (teamBWinCount / matchCount).toFixed(3),
+                    lastWinner: matchHistory[0].winner // 最近一次对战胜者
+                };
+                
+                // 缓存对战数据
+                AIAnalytics.matchHistoryCache[matchKey] = {
+                    data: headToHeadData,
+                    updateTime: now
+                };
+                Logger.info(`获取 ${teamA} vs ${teamB} 对战历史（共${matchCount}场）`, true);
+                return headToHeadData;
+            } catch (e) {
+                Logger.warning(`获取对战历史失败，使用默认数据`, true);
+                // 降级策略：返回基础对战数据
+                return {
+                    totalMatches: 2,
+                    teamAWinRate: 0.5,
+                    teamBWinRate: 0.5,
+                    lastWinner: teamA
+                };
+            }
+        }
+
+        // 预测获胜者（增强版）
+        async function predictWinner(teamDataArray, teamNames, betItem) {
             const validData = teamDataArray.filter(data => data !== null);
             if (validData.length < 2) {
                 const highestOddsOption = getHighestOddsOption(betItem);
                 return {
                     prediction: highestOddsOption ? highestOddsOption.text : teamNames[0],
-                    confidence: 0.5
+                    confidence: 0.55, // 基础可信度提升，避免极端值
+                    analysis: "数据不足，基于赔率预测" // 新增：预测依据说明
                 };
             }
             
-            const teamScores = validData.map(data => {
-                const winRateScore = data.winRate * 0.4;
-                const recentFormScore = Math.min(1, Math.max(0, (data.avgScoreDiff + 10) / 20)) * 0.3;
-                const option = betItem.optionsList.find(opt => opt.text.includes(data.teamName));
-                const odds = option ? parseFloat(option.odds) : 1;
-                const oddsScore = Math.min(1, 2 / odds) * 0.3;
+            // 新增：获取两队对战历史（关键补充数据）
+            const [teamAData, teamBData] = validData;
+            const headToHeadData = await fetchMatchHistory(teamAData.teamName, teamBData.teamName);
+            
+            // 多维度加权计算（总权重100%）
+            const teamScores = validData.map((data, idx) => {
+                const isTeamA = idx === 0;
+                const teamOption = betItem.optionsList.find(opt => opt.text.includes(data.teamName));
+                const odds = teamOption ? parseFloat(teamOption.odds) : 1;
+                
+                // 1. 基础胜率（20%）：长期实力体现
+                const winRateScore = parseFloat(data.winRate) * 0.2;
+                
+                // 2. 近期状态（25%）：近3场胜率，反映当前状态
+                const recentFormScore = parseFloat(data.recent3WinRate) * 0.25;
+                
+                // 3. 对战历史（20%）：两队直接对抗记录
+                const headToHeadScore = isTeamA 
+                    ? parseFloat(headToHeadData.teamAWinRate) * 0.2 
+                    : parseFloat(headToHeadData.teamBWinRate) * 0.2;
+                
+                // 4. 主场优势（10%）：若当前比赛为主场，叠加优势
+                const homeAdvantage = betItem.undertext?.includes(data.teamName) ? parseFloat(data.homeWinRate) * 0.1 : 0;
+                
+                // 5. 赔率修正（15%）：机构赔率隐含的实力评估
+                const oddsScore = Math.min(1, 2 / odds) * 0.15;
+                
+                // 6. 稳定性得分（10%）：比分波动越小，稳定性越高
+                const stabilityScore = (3 - parseFloat(data.scoreStability)) / 3 * 0.1;
+                
+                // 新增：关键球员状态惩罚（最高扣10%）
+                let penalty = 0;
+                if (data.keyPlayerStatus === "injured") penalty = 0.1;
+                if (data.keyPlayerStatus === "suspended") penalty = 0.08;
+                
+                // 总分计算（扣除惩罚项）
+                let totalScore = (winRateScore + recentFormScore + headToHeadScore + homeAdvantage + oddsScore + stabilityScore) - penalty;
+                totalScore = Math.max(0.1, Math.min(0.9, totalScore)); // 限制得分范围，避免极端值
+                
+                // 新增：详细得分 breakdown（用于日志和调试）
+                Logger.info(`[AI分析] ${data.teamName} 得分明细：
+                    基础胜率(${data.winRate}): ${winRateScore.toFixed(3)},
+                    近期状态(${data.recent3WinRate}): ${recentFormScore.toFixed(3)},
+                    对战历史: ${headToHeadScore.toFixed(3)},
+                    主场优势: ${homeAdvantage.toFixed(3)},
+                    赔率修正: ${oddsScore.toFixed(3)},
+                    稳定性: ${stabilityScore.toFixed(3)},
+                    球员状态惩罚: ${penalty.toFixed(3)},
+                    总分: ${totalScore.toFixed(3)}`, true);
                 
                 return {
                     teamName: data.teamName,
-                    score: winRateScore + recentFormScore + oddsScore
+                    score: totalScore,
+                    keyFactors: [
+                        data.keyPlayerStatus !== "normal" ? `关键球员${data.keyPlayerStatus}` : "",
+                        headToHeadData.lastWinner === data.teamName ? "近期对战占优" : "",
+                        parseFloat(data.recent3WinRate) > 0.6 ? "近期状态火热" : ""
+                    ].filter(Boolean).join("; ") // 新增：关键影响因素
                 };
             });
             
+            // 计算最终预测结果
             const maxScore = Math.max(...teamScores.map(ts => ts.score));
-            const prediction = teamScores.find(ts => ts.score === maxScore).teamName;
+            const predictionTeam = teamScores.find(ts => ts.score === maxScore).teamName;
             const sortedScores = [...teamScores.map(ts => ts.score)].sort((a, b) => b - a);
-            const confidence = Math.min(1, 0.5 + (sortedScores[0] - sortedScores[1]) * 2);
             
-            return { prediction, confidence };
+            // 优化可信度计算（基于得分差，更精准）
+            let confidence = 0.5 + (sortedScores[0] - sortedScores[1]) * 3; // 得分差权重提升
+            confidence = Math.min(0.95, Math.max(0.55, confidence)); // 可信度限制在55%-95%，避免不合理值
+            
+            // 新增：预测依据汇总
+            const winningFactors = teamScores.find(ts => ts.teamName === predictionTeam).keyFactors;
+            const analysis = winningFactors.length > 0 
+                ? `核心依据：${winningFactors.join("；")}；得分优势：${(sortedScores[0] - sortedScores[1]).toFixed(3)}`
+                : `综合实力评估；得分优势：${(sortedScores[0] - sortedScores[1]).toFixed(3)}`;
+            
+            Logger.info(`[AI预测] 最终分析：${analysis}，可信度：${(confidence * 100).toFixed(1)}%`, true);
+            return { 
+                prediction: predictionTeam, 
+                confidence: confidence,
+                analysis: analysis // 新增：预测依据（前端可展示）
+            };
+        }
+
+        // AI分析模块（增强版）
+        async function analyzeWithAI(betItem) {
+            try {
+                Logger.info(`开始AI深度分析项目 #${betItem.id}（含对战历史/主场优势等维度）...`, true);
+                
+                const teams = betItem.optionsList.map(opt => opt.text.trim());
+                const teamDataPromises = teams.map(team => fetchTeamHistory(team));
+                const teamDataArray = await Promise.all(teamDataPromises);
+                
+                // 调用优化后的预测函数（新增await，适配异步对战历史获取）
+                const prediction = await predictWinner(teamDataArray, teams, betItem);
+                AIAnalytics.predictionCache[betItem.id] = prediction;
+                
+                // 日志新增预测依据展示
+                Logger.info(`AI分析完成项目 #${betItem.id}: 预测 ${prediction.prediction}（可信度: ${(prediction.confidence * 100).toFixed(1)}%），依据：${prediction.analysis}`, true);
+                renderBetTable();
+                return prediction;
+            } catch (e) {
+                Logger.warning(`项目 #${betItem.id} 的AI深度分析失败: ${e.message}，降级为基础预测`, true);
+                // 新增：分析失败降级逻辑
+                const highestOddsOption = getHighestOddsOption(betItem);
+                const fallbackPrediction = {
+                    prediction: highestOddsOption ? highestOddsOption.text : teams[0],
+                    confidence: 0.55,
+                    analysis: "AI分析失败，基于赔率降级预测"
+                };
+                AIAnalytics.predictionCache[betItem.id] = fallbackPrediction;
+                renderBetTable();
+                return fallbackPrediction;
+            }
         }
 
         // 策略分析逻辑
@@ -1786,13 +1962,17 @@
                         optionsHtml = "无选项";
                     }
                     
-                    // AI预测显示
+                    // AI预测显示（增强版：新增hover提示展示预测依据）
                     const aiPredictionHtml = aiPrediction && CONFIG.state.aiPredictionEnabled
-                        ? `<div class="text-sm">
+                        ? `<div class="text-sm relative group">
                             ${aiPrediction.prediction}
                             <div class="text-xs text-gray-500">可信度: ${(aiPrediction.confidence * 100).toFixed(1)}%</div>
+                            <!-- 新增：预测依据hover提示 -->
+                            <div class="absolute bottom-full left-0 mb-1 px-3 py-2 bg-dark text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 w-max">
+                                预测依据：${aiPrediction.analysis || '综合实力评估'}
+                            </div>
                            </div>`
-                        : (CONFIG.state.aiPredictionEnabled ? "分析中..." : "已禁用");
+                        : (CONFIG.state.aiPredictionEnabled ? "<div class='text-sm text-gray-500'>深度分析中...</div>" : "已禁用");
                     
                     html += `<tr class="table-hover-row transition-colors">
                         <td class="border p-3">${item.id}</td>
@@ -2078,159 +2258,158 @@
                     </div>
                     <div>
                         <label class="block text-sm text-gray-600 mb-1.5">基础金额</label>
-                        <input type="number" id="baseAmountInput" min="1" value="1000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <input type="number" id="baseAmountInput" min="1" value="1000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2
+						                        focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">投注策略 <span class="text-danger text-xs">*</span></label>
-                        <select id="betStrategySelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <option value="larger">larger (押大)</option>
-                            <option value="smaller">smaller (押小)</option>
-                            <option value="follow">follow (跟随)</option>
-                            <option value="higher_odds">higher_odds (高赔率自动下注)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">投注检查间隔(秒) <span class="text-danger text-xs">*</span></label>
+                        <label class="block text-sm text-gray-600 mb-1.5">投注检查间隔（秒）</label>
                         <input type="number" id="checkIntervalInput" min="0.1" step="0.1" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔(毫秒) <span class="text-danger text-xs">*</span></label>
-                        <input type="number" id="followCheckIntervalInput" min="100" max="3000" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        <label class="block text-sm text-gray-600 mb-1.5">跟随检查间隔（毫秒）</label>
+                        <input type="number" id="followCheckIntervalInput" min="100" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
                     </div>
                     <div>
-                        <label class="block text-sm text-gray-600 mb-1.5">数据刷新间隔（时-分-秒） <span class="text-danger text-xs">*</span></label>
-                        <div class="flex gap-2">
-                            <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <input type="number" id="refreshSecondsInput" min="0" max="59" placeholder="秒" class="flex-1 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                        </div>
+                        <label class="block text-sm text-gray-600 mb-1.5">投注策略</label>
+                        <select id="betStrategySelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                            <option value="higher_odds">最高赔率策略</option>
+                            <option value="larger">押大策略</option>
+                            <option value="smaller">押小策略</option>
+                            <option value="follow">跟随目标用户</option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-sm text-gray-600 mb-1.5">待投注筛选方式</label>
                         <select id="pendingFilterSelect" class="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
-                            <option value="all">全选（保留所有符合条件的项目）</option>
-                            <option value="highest_odds">最高赔率（每期一个）</option>
-                            <option value="highest_amount">最高金额（每期一个）</option>
-                            <option value="ratio_based">最佳比例（赔率×金额最高，每期一个）</option>
+                            <option value="all">全部投注</option>
+                            <option value="highest_odds">最高赔率</option>
+                            <option value="highest_amount">最高金额</option>
+                            <option value="ratio_based">最佳比例</option>
                         </select>
                     </div>
-                </div>
-                <div class="flex items-center gap-4 mb-4 flex-wrap">
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" id="detailedLogModeCheckbox" class="rounded text-warning focus:ring-warning">
-                        <label for="detailedLogModeCheckbox" class="text-sm text-gray-600">详细日志模式</label>
+                    <div>
+                        <label class="flex items-center gap-2 mt-4">
+                            <input type="checkbox" id="aiPredictionEnabledCheckbox" class="rounded text-purple focus:ring-purple">
+                            <span class="text-sm text-gray-700">启用AI深度分析预测（最高赔率策略生效）</span>
+                        </label>
+                        <label class="flex items-center gap-2 mt-2">
+                            <input type="checkbox" id="detailedLogModeCheckbox" class="rounded text-primary focus:ring-primary">
+                            <span class="text-sm text-gray-700">启用详细日志模式</span>
+                        </label>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" id="aiPredictionEnabledCheckbox" class="rounded text-purple-500 focus:ring-purple-500" checked>
-                        <label for="aiPredictionEnabledCheckbox" class="text-sm text-gray-600">启用AI预测（非跟随模式）</label>
+                </div>
+                
+                <div class="border-t pt-4">
+                    <h3 class="font-medium mb-3 text-gray-700">数据刷新间隔设置</h3>
+                    <div class="flex flex-wrap gap-3 items-center">
+                        <div class="flex items-center gap-2">
+                            <input type="number" id="refreshHoursInput" min="0" max="24" placeholder="时" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                            <span class="text-gray-500">:</span>
+                            <input type="number" id="refreshMinutesInput" min="0" max="59" placeholder="分" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                            <span class="text-gray-500">:</span>
+                            <input type="number" id="refreshSecondsInput" min="5" max="59" placeholder="秒" class="w-16 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-warning focus:border-warning outline-none transition-shadow">
+                        </div>
+                        <button id="setIntervalBtn" class="bg-warning text-white px-4 py-2.5 rounded-lg hover:bg-warning/90 transition-colors">
+                            设置刷新间隔
+                        </button>
+                        <div class="ml-auto flex items-center gap-3">
+                            <button id="autoRefreshBtn" class="bg-secondary/90 text-white px-4 py-2.5 rounded-lg hover:bg-secondary transition-colors">
+                                关闭自动刷新
+                            </button>
+                            <button id="manualRefreshBtn" class="bg-primary/90 text-white px-4 py-2.5 rounded-lg hover:bg-primary transition-colors">
+                                <i class="fa fa-refresh mr-1"></i>手动刷新
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-sm text-gray-500">
+                        下次刷新倒计时: <span id="refreshIntervalDisplay" class="font-mono text-primary"></span>
                     </div>
                 </div>
-                <div class="text-right">
-                    <button id="saveParamsBtn" class="bg-success text-white px-5 py-2.5 rounded-lg hover:bg-success/90 transition-colors">
-                        保存参数 (立即生效)
+                
+                <div class="mt-5">
+                    <button id="saveParamsBtn" class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors w-full md:w-auto">
+                        <i class="fa fa-save mr-2"></i>保存所有参数设置
                     </button>
                 </div>
             </div>
             
-            <!-- 可投注项目区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-primary">
+            <!-- 可投注项目表格 -->
+            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
                 <h2 class="text-lg font-semibold mb-4 flex items-center">
                     <i class="fa fa-list text-primary mr-2"></i>可投注项目
+                    <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="availableBetsCount">0</span> 个项目</span>
                 </h2>
-                <div class="flex flex-wrap gap-3 mb-5 items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <span class="text-sm text-gray-600">数据刷新倒计时:</span>
-                        <span id="refreshIntervalDisplay" class="p-2.5 bg-gray-50 rounded-lg text-sm border border-gray-300 min-w-[130px] text-center font-mono"></span>
-                        <button id="setIntervalBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
-                            刷新倒计时
-                        </button>
-                    </div>
-                    <div class="flex gap-2">
-                        <button id="autoRefreshBtn" class="bg-primary text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-primary/90 transition-colors">
-                            关闭自动刷新
-                        </button>
-                        <button id="manualRefreshBtn" class="bg-gray-600 text-white px-3.5 py-2.5 rounded-lg text-sm hover:bg-gray-700 transition-colors">
-                            手动刷新
-                        </button>
-                    </div>
-                </div>
                 <div class="overflow-x-auto">
-                    <table id="betItemsTable" class="min-w-full border-collapse">
-                        <tr>
-                            <td colspan="7" class="border p-8 text-center text-gray-500">
-                                <div class="flex flex-col items-center">
-                                    <i class="fa fa-inbox text-3xl mb-2 text-gray-300"></i>
-                                    <span>请启动服务或手动刷新</span>
-                                </div>
-                            </td>
-                        </tr>
+                    <table id="betItemsTable" class="min-w-full divide-y divide-gray-200">
+                        <!-- 表格内容由JavaScript动态生成 -->
                     </table>
                 </div>
             </div>
             
-            <!-- 待投注项目区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift border-l-4 border-purple-500">
+            <!-- 待投注项目表格 -->
+            <div class="bg-white rounded-lg shadow card-shadow p-5 mb-6 hover-lift">
                 <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-calendar text-purple-500 mr-2"></i>待投注项目
+                    <i class="fa fa-calendar-check-o text-success mr-2"></i>待投注项目
+                    <span class="ml-2 text-sm font-normal text-gray-500">共 <span id="pendingBetsCount">0</span> 个项目</span>
                 </h2>
                 <div class="overflow-x-auto">
-                    <table id="pendingBetsTable" class="min-w-full border-collapse">
-                        <tr>
-                            <td colspan="8" class="border p-8 text-center text-gray-500">
-                                <div class="flex flex-col items-center">
-                                    <i class="fa fa-calendar-o text-3xl mb-2 text-gray-300"></i>
-                                    <span>暂无待投注项目</span>
-                                </div>
-                            </td>
-                        </tr>
+                    <table id="pendingBetsTable" class="min-w-full divide-y divide-gray-200">
+                        <!-- 表格内容由JavaScript动态生成 -->
                     </table>
                 </div>
             </div>
             
-            <!-- 日志区域 -->
-            <div class="bg-white rounded-lg shadow card-shadow p-5 hover-lift border-l-4 border-gray-500">
-                <h2 class="text-lg font-semibold mb-4 flex items-center">
-                    <i class="fa fa-history text-gray-500 mr-2"></i>操作日志
-                </h2>
-                <div id="logPanel" class="h-64 overflow-y-auto p-3 bg-gray-50 rounded-lg text-sm border border-gray-200">
-                    系统启动中...
-                </div>
-            </div>
-        </div>
-
-        <!-- 日志弹窗 -->
-        <div id="logModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col m-4">
-                <div class="p-4 border-b flex justify-between items-center">
-                    <h3 class="text-xl font-semibold text-primary">详细操作日志</h3>
-                    <div class="flex gap-2">
-                        <button id="clearLogModalBtn" class="bg-warning text-white px-3 py-1.5 rounded-lg text-sm hover:bg-warning/90 transition-colors">
-                            <i class="fa fa-trash mr-1"></i>清理日志
-                        </button>
-                        <button id="closeLogModal" class="text-gray-500 hover:text-gray-700 p-1.5">
-                            <i class="fa fa-times text-xl"></i>
-                        </button>
+            <!-- 日志弹窗 -->
+            <div id="logModal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4">
+                <div class="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[80vh] flex flex-col">
+                    <div class="p-4 border-b flex justify-between items-center">
+                        <h3 class="font-semibold text-lg">系统操作日志</h3>
+                        <div class="flex gap-2">
+                            <button id="clearLogModalBtn" class="text-sm text-gray-600 hover:text-danger transition-colors">
+                                <i class="fa fa-trash mr-1"></i>清空日志
+                            </button>
+                            <button id="closeLogModal" class="text-gray-500 hover:text-gray-700 transition-colors">
+                                <i class="fa fa-times text-xl"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 text-sm"></div>
+                    <div class="p-4 border-t text-sm text-gray-500">
+                        提示：详细日志模式可在参数设置中开启
                     </div>
                 </div>
-                <div id="logModalPanel" class="flex-1 overflow-y-auto p-4 bg-gray-50 text-sm">
-                    <!-- 日志内容将通过JS渲染 -->
-                </div>
-                <div class="p-4 border-t text-right">
-                    <button class="bg-gray-600 text-white px-5 py-2 rounded-lg hover:bg-gray-700 transition-colors" onclick="toggleLogModal()">
-                        关闭
-                    </button>
-                </div>
             </div>
+            
+            <footer class="text-center text-gray-500 text-sm py-4">
+                <p>M-Team 智能投注管理平台 &copy; 2023</p>
+                <p class="mt-1">使用前请确保已阅读并理解相关风险提示</p>
+            </footer>
         </div>
 
-        <!-- 服务状态实时更新 -->
         <script>
-            setInterval(() => {
-                const statusText = document.getElementById("serviceStatusText");
-                if (statusText) {
-                    statusText.textContent = isServiceRunning ? "服务运行中" : "服务已停止";
-                }
-            }, 1000);
+            // 补充表格计数更新逻辑
+            function updateTableCounts() {
+                document.getElementById("availableBetsCount").textContent = CONFIG.state.availableBets.length;
+                document.getElementById("pendingBetsCount").textContent = pendingBets.length;
+            }
+
+            // 在现有渲染函数中添加计数更新
+            const originalRenderBetTable = renderBetTable;
+            renderBetTable = function() {
+                originalRenderBetTable();
+                updateTableCounts();
+            };
+
+            const originalRenderPendingBetsTable = renderPendingBetsTable;
+            renderPendingBetsTable = function() {
+                originalRenderPendingBetsTable();
+                updateTableCounts();
+            };
+
+            // 初始化计数显示
+            document.addEventListener("DOMContentLoaded", function() {
+                updateTableCounts();
+            });
         </script>
     </body>
 </html>
